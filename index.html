@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Photography Portfolio &middot; MY GALLERY</title>
+<script src="config.js?v=20260904-deployment-build"></script>
+<link rel="stylesheet" href="assets/style.css?v=20260904-deployment-build" />
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <h1 class="site-title" id="siteTitle">MY GALLERY</h1>
+      <p class="site-sub" id="siteSubtitle">Photography portfolio &middot; drag to explore, click to open</p>
+    </div>
+    <div class="meta" id="wallMeta"></div>
+  </div>
+</header>
+
+<main class="stage" id="stage">
+  <div class="wall-viewport" id="wallViewport">
+    <div class="wall" id="wall" aria-label="Photo wall"></div>
+  </div>
+
+  <div class="empty" id="emptyState" hidden>
+    <p class="empty-title">No photographs yet</p>
+    <p class="empty-tip">1. Add photographs to the <code>photos/</code> folder (subfolders become categories)<br />
+       2. Run <code>scan.ps1</code> to rebuild the index<br />
+       3. Refresh this page to view the wall</p>
+  </div>
+
+  <div class="hint" id="hint">Drag or scroll to browse &middot; click a photograph for details</div>
+</main>
+
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Photograph details">
+  <button class="lb-btn lb-close" id="lbClose" aria-label="Close">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+  </button>
+  <button class="lb-btn lb-nav lb-prev" id="lbPrev" aria-label="Previous photograph">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
+  <button class="lb-btn lb-nav lb-next" id="lbNext" aria-label="Next photograph">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+
+  <div class="focus-layer" id="focusLayer" aria-hidden="true"></div>
+
+  <div class="lb-info" id="lbInfo">
+    <div class="lb-title-row">
+      <h2 class="lb-title" id="lbTitle"></h2>
+      <span class="lb-cat" id="lbCat" hidden></span>
+    </div>
+    <div class="lb-chips" id="lbChips"></div>
+  </div>
+</div>
+
+<script src="gallery.js?v=20260904-deployment-build"></script>
+<script src="assets/main.js?v=20260904-deployment-build"></script>
+</body>
+</html>
