@@ -1,0 +1,10 @@
+{
+  "Landscape/example.jpg": {
+    "id": "mountain-dawn",
+    "title": "First light",
+    "description": "A short story behind the photograph.",
+    "category": "Landscape",
+    "tags": ["Mountains", "Selected work"],
+    "order": 1
+  }
+}

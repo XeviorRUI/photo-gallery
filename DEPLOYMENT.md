@@ -14,12 +14,27 @@ Run the following command from PowerShell:
 
 The build performs these steps:
 
-1. Regenerates `gallery.js` with `scan.ps1`.
-2. Creates 1080 px JPEG thumbnails at quality 78.
-3. Creates 2560 px JPEG detail images at quality 88.
+1. Validates output ownership and paths, then scans into a staging directory. The source `gallery.js` is not modified.
+2. Creates 320/640/1080 px JPEG thumbnails at quality 78.
+3. Creates 1600/2560 px JPEG detail images at quality 88.
 4. Rewrites the deployment index to use the optimized paths.
 5. Copies only public runtime files into `dist/`.
-6. Adds `.nojekyll` for GitHub Pages.
+6. Adds standalone `photo/ID.html` pages and `.nojekyll` for GitHub Pages.
+7. Promotes the complete output, retaining the previous deployment if generation fails. Replacement uses same-volume directory moves with rollback; it is not a zero-downtime server deployment mechanism.
+
+Original images are decoded once per changed photo when generating variants. EXIF and encoded image caches live in `.gallery-cache/`; image keys include source content, dimensions, quality, matte color, orientation/color strategy and encoder version. Unchanged assets are reused. JavaScript/CSS versions use content hashes. The cache is local and can be discarded when no build is running; it is never published.
+
+`-Output public` creates another direct child of the project. Input directories, linked paths and existing directories without the build ownership marker are rejected. The old generated `dist` format is migrated automatically after validation. Builds for one project are serialized by a file lock.
+
+Images are oriented before resizing, loaded with embedded color management, flattened against `MatteColor`, and emitted as JPEG without embedded metadata. JPEG remains the default to preserve the established rendering; WebP/AVIF are not advertised as supported inputs by this pipeline.
+
+For absolute social preview metadata, supply the public base URL, including any project subpath:
+
+```powershell
+./build.ps1 -SiteUrl 'https://example.com/my-gallery/'
+```
+
+When `showShare` is enabled, the production permalink points to the standalone photo page, which has a link back into the animated gallery. Without `SiteUrl`, static photo pages still work, but absolute Open Graph image URLs are omitted.
 
 The generated JPEG files do not retain EXIF metadata. The metadata already
 stored in `gallery.js` remains available to the detail panel.
@@ -63,4 +78,3 @@ listing, and basic security headers.
 Only publish the contents of `dist/`. Development files such as `scan.ps1`,
 `build.ps1`, `README.md`, `DEPLOYMENT.md`, and `bugs.md` are intentionally not
 copied there.
-

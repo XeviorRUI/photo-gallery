@@ -25,6 +25,13 @@ jobs:
         shell: pwsh
         run: ./build.ps1
 
+      - name: Validate geometry, loading and build protection
+        shell: pwsh
+        run: |
+          node --test tests/core.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/build.tests.ps1
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
@@ -43,4 +50,3 @@ jobs:
       - name: Deploy GitHub Pages artifact
         id: deployment
         uses: actions/deploy-pages@v4
-

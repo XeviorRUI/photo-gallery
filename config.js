@@ -6,6 +6,11 @@ window.GALLERY_CONFIG = {
 
   /* Available themes: 'dark' or 'light'. */
   theme: 'light',
+
+  /* Optional features. Defaults preserve the original uncluttered wall. */
+  showShare: false,
+  showCollections: false,
+  order: 'shuffle', /* 'curated' uses catalog.json order values */
 };
 
 document.documentElement.dataset.theme =

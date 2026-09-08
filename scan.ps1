@@ -17,10 +17,12 @@
   ============================================================
 #>
 param(
-  [string]$Root = ''
+  [string]$Root = '',
+  [string]$OutputPath = '',
+  [switch]$StrictImages
 )
 
-$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrEmpty($Root)) { $Root = $PSScriptRoot }
 if ([string]::IsNullOrEmpty($Root)) { $Root = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -36,9 +38,9 @@ Write-Host '=== 照片墙索引生成器 ===' -ForegroundColor Cyan
 
 # ---------- 1. 收集图片文件 ----------
 $exts = @('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.avif')
-$files = Get-ChildItem -Path $photosDir -File -Recurse -ErrorAction SilentlyContinue |
+$files = @(Get-ChildItem -Path $photosDir -File -Recurse -ErrorAction SilentlyContinue |
   Where-Object { $exts -contains $_.Extension.ToLowerInvariant() } |
-  Sort-Object FullName
+  Sort-Object FullName)
 
 if (-not $files -or $files.Count -eq 0) {
   Write-Host 'photos/ 里还没有图片，本次仅生成空的索引。' -ForegroundColor Yellow
@@ -276,6 +278,7 @@ function New-PhotoEntry([System.IO.FileInfo]$f) {
   }
 
   return @{
+    id       = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.Substring(0,24).ToLowerInvariant()
     file     = $relFile
     title    = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
     category = $cat
@@ -294,12 +297,60 @@ function New-PhotoEntry([System.IO.FileInfo]$f) {
   }
 }
 
+# Optional author-managed metadata, keyed by the path below photos/.
+$overrides = @{}
+$catalogPath = Join-Path $Root 'catalog.json'
+if (Test-Path -LiteralPath $catalogPath) {
+  $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  foreach ($property in $catalog.PSObject.Properties) { $overrides[$property.Name] = $property.Value }
+}
+$seenIds = @{}
 # ---------- 5. 按分类“轮流取”混排 ----------
 $entries = New-Object System.Collections.ArrayList
 $failed = 0
+$metadataCache = Join-Path $Root '.gallery-cache/exif-v1'
+if (Test-Path -LiteralPath $metadataCache) {
+  $cursor = Get-Item -LiteralPath $metadataCache -Force
+  while ($null -ne $cursor) {
+    if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Metadata cache cannot use linked directories.' }
+    $cursor = $cursor.Parent
+  }
+}
+New-Item -ItemType Directory -Path $metadataCache -Force | Out-Null
 foreach ($f in $files) {
-  $e = New-PhotoEntry $f
+  $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  $cachedMetadata = Join-Path $metadataCache ($hash + '.json')
+  $e = $null
+  if (Test-Path -LiteralPath $cachedMetadata) {
+    if ((Get-Item -LiteralPath $cachedMetadata -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Linked metadata cache file.' }
+    try {
+      $cached = Get-Content -LiteralPath $cachedMetadata -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($cached.width -gt 0 -and $cached.height -gt 0) {
+        $e = @{}
+        foreach ($property in $cached.PSObject.Properties) { $e[$property.Name] = $property.Value }
+        $e.file = 'photos/' + $f.FullName.Substring($photosDir.Length).TrimStart('\', '/').Replace('\', '/')
+        $e.title = [IO.Path]::GetFileNameWithoutExtension($f.Name)
+        $e.category = if ($f.Directory.FullName -eq $photosDir) { '未分类' } else { $f.Directory.Name }
+      }
+    } catch { $e = $null }
+  }
+  if ($null -eq $e) {
+    $e = New-PhotoEntry $f
+    if ($null -ne $e) {
+      $e | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $cachedMetadata -Encoding UTF8
+    }
+  }
   if ($null -ne $e) {
+    $relative = $e.file.Substring(7)
+    if ($overrides.ContainsKey($relative)) {
+      foreach ($field in @('id','title','description','category','tags','order')) {
+        $property = $overrides[$relative].PSObject.Properties[$field]
+        if ($null -ne $property) { $e[$field] = $property.Value }
+      }
+    }
+    if ([string]$e.id -notmatch '^[a-zA-Z0-9_-]+$') { throw "Invalid photo id: $relative" }
+    if ($seenIds.ContainsKey([string]$e.id)) { throw "Duplicate photo id for $relative; assign distinct ids in catalog.json." }
+    $seenIds[[string]$e.id] = $true
     [void]$entries.Add($e)
   } else {
     $failed++
@@ -324,6 +375,9 @@ for ($k = 0; $k -lt $maxLen; $k++) {
   }
 }
 
+if ($StrictImages -and $failed -gt 0) {
+  throw "$failed image(s) could not be decoded. Supported by the Windows pipeline: JPEG, PNG, BMP, GIF (first frame), TIFF (first page). Convert WebP/AVIF or damaged files before building. Previous deployment retained."
+}
 # ---------- 6. 输出 gallery.js ----------
 $payload = @{
   generated = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
@@ -332,7 +386,7 @@ $payload = @{
 }
 $json = ConvertTo-Json -InputObject $payload -Depth 6
 
-$out = Join-Path $Root 'gallery.js'
+$out = if ($OutputPath) { $OutputPath } else { Join-Path $Root 'gallery.js' }
 $content = "/* 本文件由 scan.ps1 自动生成，请勿手动编辑 */`r`nwindow.GALLERY_DATA = " + $json + ";`r`n"
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($out, $content, $utf8)

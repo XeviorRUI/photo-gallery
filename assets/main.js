@@ -11,10 +11,14 @@
   const MIN_ROW_H = 110;
   const CLICK_MAX_MOVE = 8;
   const PREFETCH = 0.42;
-  const REPEAT_COUNT = 3;
   const MIDDLE_CYCLE = 1;
   const CAMERA_MOTION_MS = 820;
+  const CLOSE_BACKDROP_MS = 420;
   const SWITCH_MOTION_MS = 680;
+  const NAVIGATION_BURST_MS = 200;
+  const DIRECT_SWITCH_MAX_MS = 980;
+  const LIGHTBOX_WHEEL_STEP = 72;
+  const LIGHTBOX_WHEEL_GAP_MS = 110;
   const MOTION_EASE = 'cubic-bezier(0.65, 0, 0.35, 1)';
   const FLOAT_SCALE = 1.045;
   const WHEEL_SPEED_LIMIT = 2.6;
@@ -31,25 +35,22 @@
     theme: rawConfig.theme === 'light' ? 'light' : 'dark',
   };
   const lightTheme = siteConfig.theme === 'light';
-  const WALL_CLEAR_FILTER = 'blur(0px)';
-  const WALL_FOCUS_FILTER = 'blur(3px)';
-  const SHADE_CLEAR = lightTheme ? 'rgba(255, 255, 255, 0)' : 'rgba(5, 7, 6, 0)';
+  const BACKDROP_FOCUS_FILTER = 'blur(3px)';
   const SHADE_FOCUS = lightTheme ? 'rgba(255, 255, 255, 0.48)' : 'rgba(5, 7, 6, 0.27)';
-  const SHADOW_FLAT = '0 0 0 rgba(0, 0, 0, 0)';
   const SHADOW_FLOAT = lightTheme
-    ? '0 14px 22px -14px rgba(25, 30, 28, 0.34)'
-    : '0 15px 24px -14px rgba(0, 0, 0, 0.78)';
-  const PHOTO_CLEAR_FILTER = 'blur(0px) brightness(1) saturate(1)';
+    ? '0 17px 28px -15px rgba(25, 30, 28, 0.46)'
+    : '0 18px 30px -15px rgba(0, 0, 0, 0.88)';
+  const PHOTO_CLEAR_FILTER = 'blur(0px) brightness(1) contrast(1) saturate(1)';
   const PHOTO_BACKGROUND_FILTER = lightTheme
     ? 'blur(3px) brightness(1.2) contrast(0.82) saturate(0.72)'
-    : 'blur(3px) brightness(0.54) saturate(0.82)';
-  const reducedMotion = window.matchMedia
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    : 'blur(3px) brightness(0.54) contrast(1) saturate(0.82)';
+  const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let reducedMotion = motionPreference.matches;
+  motionPreference.addEventListener('change', event => { reducedMotion = event.matches; });
 
   const $ = (selector, root) => (root || document).querySelector(selector);
 
   const stage = $('#stage');
-  const wallViewport = $('#wallViewport');
   const wall = $('#wall');
   const emptyState = $('#emptyState');
   const metaEl = $('#wallMeta');
@@ -57,17 +58,41 @@
   const siteTitle = $('#siteTitle');
   const siteSubtitle = $('#siteSubtitle');
   const lightbox = $('#lightbox');
+  const focusBackdrop = $('#focusBackdrop');
   const focusLayer = $('#focusLayer');
   const lbTitle = $('#lbTitle');
   const lbCat = $('#lbCat');
   const lbChips = $('#lbChips');
 
   const data = (typeof window.GALLERY_DATA !== 'undefined' && window.GALLERY_DATA) || null;
-  const items = (data && Array.isArray(data.items)) ? data.items : [];
+  const allItems = GalleryCatalog.normalize(data);
+  const collection = new URLSearchParams(location.search).get('collection');
+  const items = collection ? allItems.filter(item => item.category === collection
+    || (item.tags || []).includes(collection)) : allItems;
+  const storageKey = 'gallery:' + location.pathname;
+  let storage = null;
+  try { storage = window.sessionStorage; } catch (_) {}
+  const savedView = GalleryCatalog.read(storage, storageKey) || {};
+  const requestedSeed = Number(new URLSearchParams(location.search).get('seed'));
+  const seed = requestedSeed || savedView.seed || (Math.random() * 4294967296 >>> 0);
+  const itemById = new Map(items.map((item, index) => [item.id, index]));
   const bricks = [];
   const brickByElement = new WeakMap();
   const hiddenBricks = new Set();
-  const preloadCache = new Map();
+  const imageLoader = GalleryImages.create();
+  const mounted = new Map();
+  const scene = GalleryScene.create(mode => { stage.dataset.mode = mode; });
+  let geometry = null;
+  let cameraFlight = null;
+  let cameraFrame = null;
+  let historyEntry = false;
+  let historyUpdating = false;
+  let routePending = false;
+  let routing = false;
+  let closingPromise = null;
+  let returnFocus = null;
+  let keyboardIndex = 0;
+  let saveTimer = null;
 
   let displayOrder = [];
   let orderPosByItem = [];
@@ -77,13 +102,11 @@
   let rowCount = 0;
   let rowH = 0;
   let cycleW = 0;
-  let contentW = 0;
   let pan = 0;
   let laidOut = false;
   let relayoutQueued = false;
   let layoutDeferred = false;
   let visibilityCheckId = null;
-  let lastVisibilityPan = NaN;
   let inertiaId = null;
   let wheelInertiaId = null;
   let wheelVelocity = 0;
@@ -93,10 +116,7 @@
   let interaction = null;
   let dragMoved = false;
   let suppressClickUntil = 0;
-  let touchActive = false;
 
-  let viewMode = 'wall';
-  let sceneToken = 0;
   let activeIndex = -1;
   let activeOrderPos = -1;
   let activePlacement = null;
@@ -104,8 +124,32 @@
   let activeOverlay = null;
   let activeOverlayRect = null;
   let homeAnchorRatio = 0.5;
+  let activeSwitchSteps = 0;
+  let pendingNavigationSteps = 0;
+  let navigationBurstTimer = null;
+  let lightboxWheelDelta = 0;
+  let lightboxWheelDirection = 0;
+  let lightboxWheelLastInput = 0;
+  let closePreparation = null;
 
   applySiteConfig();
+
+  const collectionSelect = $('#collections');
+  if (rawConfig.showCollections) {
+    const labels = [...new Set(allItems.flatMap(item => [item.category, ...(item.tags || [])]).filter(Boolean))].sort();
+    [['', 'All photographs'], ...labels.map(label => [label, label])].forEach(([value, label]) => {
+      const option = document.createElement('option'); option.value = value; option.textContent = label;
+      collectionSelect.appendChild(option);
+    });
+    collectionSelect.value = collection || '';
+    collectionSelect.hidden = false;
+    collectionSelect.addEventListener('change', () => {
+      const url = new URL(location.href); url.hash = '';
+      if (collectionSelect.value) url.searchParams.set('collection', collectionSelect.value);
+      else url.searchParams.delete('collection');
+      location.href = url.href;
+    });
+  }
 
   if (!items.length) {
     metaEl.textContent = '0 photographs';
@@ -113,8 +157,7 @@
     return;
   }
 
-  displayOrder = items.map(function (_, index) { return index; });
-  shuffle(displayOrder);
+  displayOrder = GalleryCatalog.shuffledIndices(items, seed, rawConfig.order === 'curated');
   orderPosByItem = new Array(items.length);
   displayOrder.forEach(function (itemIndex, orderPos) {
     orderPosByItem[itemIndex] = orderPos;
@@ -138,12 +181,11 @@
   }
 
   function layout() {
-    if (viewMode !== 'wall' || !updateViewport()) return;
+    if (scene.mode !== 'wall' || !updateViewport()) return;
 
     emptyState.hidden = true;
     clearHiddenBricks();
-    const oldCycleW = cycleW;
-    const oldProgress = oldCycleW > 0 ? pan / oldCycleW : -1;
+    const anchor = laidOut ? captureAnchor() : savedView.anchor;
 
     padTop = Math.min(104, Math.max(64, Math.round(vh * 0.115)));
     const edgePeek = Math.min(54, Math.max(30, Math.round(vh * 0.055)));
@@ -165,15 +207,6 @@
     const widths = displayOrder.map(function (itemIndex) {
       return Math.max(40, itemAspect(items[itemIndex]) * rowH);
     });
-    cycleW = widths.reduce(function (sum, width) { return sum + width; }, 0)
-      + GAP * items.length;
-    contentW = PAD_X * 2 + REPEAT_COUNT * cycleW;
-
-    wall.textContent = '';
-    bricks.length = 0;
-    wall.style.width = contentW + 'px';
-    wall.style.height = vh + 'px';
-
     const offsetStep = Math.max(1, Math.floor(items.length / Math.max(1, rowCount)));
     const rowDefinitions = [{
       row: -1,
@@ -196,68 +229,37 @@
       decorative: true,
     });
 
-    rowDefinitions.forEach(function (rowDefinition) {
-      const rowOffset = rowDefinition.offset;
-      const y = rowDefinition.y;
-
-      for (let cycle = 0; cycle < REPEAT_COUNT; cycle++) {
-        let x = PAD_X + cycle * cycleW;
-
-        for (let position = 0; position < items.length; position++) {
-          const orderPos = (rowOffset + position) % items.length;
-          const itemIndex = displayOrder[orderPos];
-          const width = widths[orderPos];
-          const element = document.createElement('div');
-          element.className = rowDefinition.decorative ? 'brick decorative' : 'brick';
-          element.dataset.i = String(itemIndex);
-          element.dataset.orderPos = String(orderPos);
-          element.dataset.row = String(rowDefinition.row);
-          element.dataset.cycle = String(cycle);
-          if (rowDefinition.decorative) element.setAttribute('aria-hidden', 'true');
-          element.style.width = width + 'px';
-          element.style.height = rowH + 'px';
-          element.style.background = tone(itemIndex);
-          element.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
-
-          const image = document.createElement('img');
-          image.alt = items[itemIndex].title || '';
-          image.draggable = false;
-          image.decoding = 'async';
-          image.addEventListener('load', onBrickImageLoad);
-          image.addEventListener('error', onBrickImageError);
-          element.appendChild(image);
-          wall.appendChild(element);
-
-          const brick = {
-            el: element,
-            img: image,
-            itemIdx: itemIndex,
-            orderPos: orderPos,
-            row: rowDefinition.row,
-            cycle: cycle,
-            x: x,
-            y: y,
-            w: width,
-            h: rowH,
-            decorative: rowDefinition.decorative,
-            srcOn: false,
-          };
-          bricks.push(brick);
-          brickByElement.set(element, brick);
-
-          x += width + GAP;
-        }
-      }
-    });
-
-    pan = laidOut && oldCycleW > 0 ? oldProgress * cycleW : -cycleW;
+    mounted.forEach(brick => brick.el.remove());
+    mounted.clear();
+    bricks.length = 0;
+    geometry = GalleryLayout.create(widths, rowDefinitions, rowH, GAP, PAD_X);
+    cycleW = geometry.cycleWidth;
+    // Only the viewport is a paint surface; children retain logical wall coordinates.
+    wall.style.width = vw + 'px';
+    wall.style.height = vh + 'px';
+    pan = -cycleW;
+    if (anchor && itemById.has(anchor.id)) {
+      const brick = geometry.copy(0, orderPosByItem[itemById.get(anchor.id)], 1);
+      pan = vw * (anchor.screen ?? 0.5) - brick.x - brick.w * (anchor.fraction ?? 0.5);
+    }
     laidOut = true;
     applyPan();
-    requestAnimationFrame(function () {
-      bricks.forEach(function (brick) { brick.el.classList.add('ready'); });
-    });
     ensureVisibleForCameras([normalCamera()]);
-    lastVisibilityPan = pan;
+  }
+
+  function captureAnchor() {
+    if (!geometry) return null;
+    const worldX = vw / 2 - pan;
+    const candidates = geometry.query(worldX - rowH * 10, worldX + rowH * 10)
+      .filter(brick => brick.row === 0);
+    const brick = candidates.reduce((best, b) => !best || Math.abs(b.x + b.w / 2 - worldX)
+      < Math.abs(best.x + best.w / 2 - worldX) ? b : best, null);
+    return brick ? { id: items[displayOrder[brick.orderPos]].id,
+      fraction: (worldX - brick.x) / brick.w, screen: 0.5 } : null;
+  }
+
+  function rememberView() {
+    GalleryCatalog.write(storage, storageKey, { seed, anchor: captureAnchor() });
   }
 
   function itemAspect(item) {
@@ -267,9 +269,7 @@
 
   function normalizedPan(value) {
     if (!cycleW) return value;
-    while (value > 0) value -= cycleW;
-    while (value <= -2 * cycleW) value += cycleW;
-    return value;
+    return -cycleW - GalleryLayout.mod(-value - cycleW, cycleW);
   }
 
   function applyPan() {
@@ -281,6 +281,8 @@
     pan = normalizedPan(nextPan);
     applyPan();
     scheduleVisibilityCheck();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(rememberView, 180);
   }
 
   function normalCamera() {
@@ -294,7 +296,7 @@
   }
 
   function beginInteraction(event, touch) {
-    if (viewMode !== 'wall') return;
+    if (scene.mode !== 'wall') return;
     if (!touch && event.button !== 0) return;
     const point = pointFromEvent(event, touch);
     if (!point) return;
@@ -354,14 +356,15 @@
 
   function startInertia(velocity) {
     stopInertia();
-    let currentVelocity = velocity;
+    // Preserve the original short glide while using px/ms throughout.
+    let currentVelocity = reducedMotion ? 0 : velocity / 16.7;
     let lastTime = performance.now();
     const step = function (now) {
       const deltaTime = Math.min(50, now - lastTime);
       lastTime = now;
-      setPan(pan + currentVelocity * (deltaTime / 16.7));
+      setPan(pan + currentVelocity * deltaTime);
       currentVelocity *= Math.pow(0.95, deltaTime / 16.7);
-      if (Math.abs(currentVelocity) > 0.08) inertiaId = requestAnimationFrame(step);
+      if (Math.abs(currentVelocity) > 0.08 / 16.7) inertiaId = requestAnimationFrame(step);
       else inertiaId = null;
     };
     inertiaId = requestAnimationFrame(step);
@@ -374,14 +377,14 @@
   }
 
   function wheelDeltaInPixels(event) {
-    let delta = event.deltaY;
+    let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
     if (event.deltaMode === 1) delta *= 16;
     else if (event.deltaMode === 2) delta *= vh || window.innerHeight;
     return Math.max(-160, Math.min(160, delta));
   }
 
   function beginWheelMotion(event) {
-    if (viewMode !== 'wall' || event.ctrlKey) return;
+    if (scene.mode !== 'wall' || event.ctrlKey) return;
     const delta = wheelDeltaInPixels(event);
     if (!delta) return;
     if (event.cancelable) event.preventDefault();
@@ -406,8 +409,31 @@
     }
   }
 
+  function beginLightboxWheelNavigation(event) {
+    const info = event.target.closest && event.target.closest('#lbInfo');
+    if (info && info.scrollHeight > info.clientHeight) return;
+    if ((scene.mode !== 'focused' && scene.mode !== 'switching') || event.ctrlKey) return;
+    const delta = wheelDeltaInPixels(event);
+    if (!delta) return;
+    if (event.cancelable) event.preventDefault();
+
+    const now = performance.now();
+    const direction = delta > 0 ? 1 : -1;
+    if (now - lightboxWheelLastInput > LIGHTBOX_WHEEL_GAP_MS
+      || direction !== lightboxWheelDirection) {
+      lightboxWheelDelta = 0;
+    }
+    lightboxWheelLastInput = now;
+    lightboxWheelDirection = direction;
+    lightboxWheelDelta += Math.abs(delta);
+
+    if (lightboxWheelDelta < LIGHTBOX_WHEEL_STEP) return;
+    lightboxWheelDelta %= LIGHTBOX_WHEEL_STEP;
+    requestNavigation(direction);
+  }
+
   function stepWheelMotion(now) {
-    if (viewMode !== 'wall') {
+    if (scene.mode !== 'wall') {
       stopWheelInertia();
       return;
     }
@@ -446,133 +472,156 @@
     return hit && hit.closest ? hit.closest('.brick') : null;
   }
 
-  stage.addEventListener('mousedown', function (event) { beginInteraction(event, false); });
-  stage.addEventListener('wheel', beginWheelMotion, { passive: false });
-  window.addEventListener('mousemove', function (event) { moveInteraction(event, false); });
-  window.addEventListener('mouseup', function (event) { endInteraction(event, false); });
-  stage.addEventListener('touchstart', function (event) {
-    if (event.touches.length !== 1) return;
-    touchActive = true;
-    beginInteraction(event, true);
-  }, { passive: false });
-  window.addEventListener('touchmove', function (event) {
-    if (touchActive) moveInteraction(event, true);
-  }, { passive: false });
-  window.addEventListener('touchend', function (event) {
-    if (!touchActive) return;
-    endInteraction(event, true);
-    touchActive = false;
-  }, { passive: false });
-  window.addEventListener('touchcancel', function () {
-    interaction = null;
-    dragMoved = false;
-    touchActive = false;
+  stage.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    beginInteraction(event, false);
+    if (interaction) {
+      interaction.pointerId = event.pointerId;
+      stage.setPointerCapture(event.pointerId);
+    }
+  });
+  stage.addEventListener('pointermove', event => {
+    if (interaction && event.pointerId === interaction.pointerId) moveInteraction(event, false);
+  });
+  stage.addEventListener('pointerup', event => {
+    if (!interaction || event.pointerId !== interaction.pointerId) return;
+    endInteraction(event, false);
+    if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+  });
+  function cancelPointer() {
+    interaction = null; dragMoved = false;
     stage.classList.remove('panning');
-  }, { passive: false });
-  stage.addEventListener('click', function (event) {
-    if (viewMode !== 'wall' || performance.now() < suppressClickUntil) return;
-    const element = event.target && event.target.closest
-      ? event.target.closest('.brick')
-      : null;
-    if (element) openPhoto(parseInt(element.dataset.i, 10), element);
+  }
+  stage.addEventListener('pointercancel', cancelPointer);
+  stage.addEventListener('lostpointercapture', cancelPointer);
+  stage.addEventListener('wheel', beginWheelMotion, { passive: false });
+  stage.addEventListener('click', event => {
+    if (scene.mode !== 'wall' || performance.now() < suppressClickUntil) return;
+    const element = event.target.closest('.brick');
+    if (element) openPhoto(Number(element.dataset.i), element);
   });
 
   /* ---------- Image loading ---------- */
+  function wallSourceForItem(item, size) {
+    return GalleryImages.source(item, (size || rowH * itemAspect(item)) * (window.devicePixelRatio || 1), false);
+  }
+
+  function mountBrick(spec) {
+    if (mounted.has(spec.key)) return mounted.get(spec.key);
+    const brick = { ...spec, itemIdx: displayOrder[spec.orderPos] };
+    const element = document.createElement('div');
+    const image = document.createElement('img');
+    brick.el = element; brick.img = image;
+    element.className = 'brick ready' + (brick.decorative ? ' decorative' : '');
+    Object.assign(element.dataset, { i: brick.itemIdx, orderPos: brick.orderPos, row: brick.row, cycle: brick.cycle });
+    Object.assign(element.style, { width: brick.w + 'px', height: brick.h + 'px',
+      left: brick.x + 'px', top: brick.y + 'px', background: tone(brick.itemIdx) });
+    element.setAttribute('role', 'button');
+    element.setAttribute('aria-label', items[brick.itemIdx].title || 'Untitled');
+    element.tabIndex = -1;
+    image.alt = ''; image.draggable = false; image.decoding = 'async';
+    element.appendChild(image); wall.appendChild(element);
+    mounted.set(brick.key, brick); brickByElement.set(element, brick);
+    const src = wallSourceForItem(items[brick.itemIdx], Math.max(brick.w, brick.h));
+    brick.src = src;
+    imageLoader.load(src, 1).catch(error => {
+      if (error.name === 'AbortError' || !element.isConnected) throw error;
+      return imageLoader.load(items[brick.itemIdx].file, 1);
+    }).then(loaded => {
+      if (!element.isConnected) return;
+      image.src = loaded.currentSrc || loaded.src;
+      image.classList.add('in');
+    }).catch(error => {
+      if (element.isConnected && error.name !== 'AbortError') element.classList.add('image-unavailable');
+    });
+    return brick;
+  }
+
   function ensureVisibleForCameras(cameras) {
-    if (!bricks.length || !cycleW || !cameras.length) return;
-    const ranges = cameras.map(function (camera) {
+    if (!geometry || !cameras.length) return;
+    const wanted = new Map();
+    cameras.forEach(camera => {
       const scale = Math.max(0.01, camera.scale);
       const margin = vw * PREFETCH / scale;
-      return {
-        left: -camera.tx / scale - margin,
-        right: (vw - camera.tx) / scale + margin,
-      };
+      geometry.query(-camera.tx / scale - margin, (vw - camera.tx) / scale + margin,
+        -camera.ty / scale - rowH, (vh - camera.ty) / scale + rowH)
+        .forEach(brick => wanted.set(brick.key, brick));
     });
+    hiddenBricks.forEach(brick => wanted.set(brick.key, brick));
+    if (activePlacement) wanted.set(activePlacement.brick.key, activePlacement.brick);
+    if (interaction && interaction.brick) {
+      const brick = brickByElement.get(interaction.brick);
+      if (brick) wanted.set(brick.key, brick);
+    }
+    const focused = brickByElement.get(document.activeElement);
+    if (focused) wanted.set(focused.key, focused);
+    mounted.forEach((brick, key) => {
+      if (!wanted.has(key)) { brick.el.remove(); mounted.delete(key); }
+    });
+    wanted.forEach(mountBrick);
+    bricks.length = 0;
+    mounted.forEach(brick => bricks.push(brick));
+    const semantic = new Map();
+    bricks.forEach(brick => {
+      if (brick.el.tabIndex !== -1) brick.el.tabIndex = -1;
+      if (brick.el.getAttribute('aria-hidden') !== 'true') brick.el.setAttribute('aria-hidden', 'true');
+      if (brick.decorative) return;
+      const previous = semantic.get(brick.itemIdx);
+      if (!previous || Math.abs(brick.x + pan + brick.w / 2 - vw / 2)
+        < Math.abs(previous.x + pan + previous.w / 2 - vw / 2)) semantic.set(brick.itemIdx, brick);
+    });
+    semantic.forEach(brick => brick.el.removeAttribute('aria-hidden'));
+    const keyboardBrick = semantic.get(keyboardIndex) || [...semantic.values()][0];
+    if (keyboardBrick) keyboardBrick.el.tabIndex = 0;
+    const keep = new Set(bricks.map(brick => brick.src));
+    if (activeIndex >= 0) keep.add(detailSource(activeIndex));
+    if (pendingNavigationSteps && activeOrderPos >= 0) keep.add(detailSource(displayOrder[wrappedOrderPos(activeOrderPos + activeSwitchSteps + pendingNavigationSteps)]));
+    imageLoader.prune(keep);
+  }
 
-    bricks.forEach(function (brick) {
-      const visible = ranges.some(function (range) {
-        return brick.x + brick.w >= range.left && brick.x <= range.right;
-      });
-      if (!visible) {
-        if (brick.srcOn && !hiddenBricks.has(brick)) {
-          brick.img.removeAttribute('src');
-          brick.img.classList.remove('in', 'broken');
-          brick.srcOn = false;
-        }
-        return;
-      }
-      if (brick.srcOn) return;
-      brick.srcOn = true;
-      brick.img.src = items[brick.itemIdx].thumb || items[brick.itemIdx].file;
-    });
+  function prepareWallForCameras(cameras) {
+    ensureVisibleForCameras(cameras);
+    // Background fetches never block an input or a camera transition.
+    return Promise.resolve();
   }
 
   function scheduleVisibilityCheck() {
-    const threshold = Math.max(72, vw * 0.1);
-    if (Number.isFinite(lastVisibilityPan)
-      && Math.abs(pan - lastVisibilityPan) < threshold) return;
     if (visibilityCheckId) return;
-
-    visibilityCheckId = requestAnimationFrame(function () {
+    visibilityCheckId = requestAnimationFrame(() => {
       visibilityCheckId = null;
-      if (viewMode !== 'wall') return;
-      ensureVisibleForCameras([normalCamera()]);
-      lastVisibilityPan = pan;
+      if (scene.mode === 'wall') ensureVisibleForCameras([normalCamera()]);
     });
   }
 
-  function onBrickImageLoad(event) {
-    const image = event.currentTarget;
-    image.classList.add('in');
-    const brickElement = image.closest('.brick');
-    const brick = brickElement ? brickByElement.get(brickElement) : null;
-    if (!brick) return;
-    const item = items[brick.itemIdx];
-    if (item.width > 0 && item.height > 0) return;
-    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-      item.width = image.naturalWidth;
-      item.height = image.naturalHeight;
-      queueRelayout();
-    }
+  function detailSource(index) {
+    const metrics = focusMetrics();
+    const aspect = itemAspect(items[index]);
+    const height = Math.min(metrics.maxHeight, metrics.maxWidth / aspect);
+    return GalleryImages.source(items[index], Math.max(height, height * aspect) * (window.devicePixelRatio || 1), true);
   }
 
-  function onBrickImageError(event) {
-    event.currentTarget.classList.add('broken');
-  }
+  function preloadPhoto(index, priority = 0) { return imageLoader.load(detailSource(index), priority); }
 
-  function queueRelayout() {
-    if (relayoutQueued) return;
-    if (viewMode !== 'wall') {
-      layoutDeferred = true;
-      return;
-    }
-    relayoutQueued = true;
-    requestAnimationFrame(function () {
-      relayoutQueued = false;
-      layout();
+  function sceneStart(mode) { return scene.begin(mode); }
+
+  function previewPhoto(index, sourceBrick) {
+    if (sourceBrick && sourceBrick.img.complete && sourceBrick.img.naturalWidth) return Promise.resolve(sourceBrick.img);
+    const signal = scene.signal;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(new Error('Scene cancelled'));
+      signal.addEventListener('abort', abort, { once: true });
+      imageLoader.load(wallSourceForItem(items[index]), 0)
+        .catch(() => preloadPhoto(index)).then(resolve, reject)
+        .finally(() => signal.removeEventListener('abort', abort));
     });
   }
 
-  function preloadPhoto(itemIndex) {
-    if (preloadCache.has(itemIndex)) return preloadCache.get(itemIndex);
-    const promise = new Promise(function (resolve, reject) {
-      const image = new Image();
-      image.decoding = 'async';
-      image.alt = items[itemIndex].title || '';
-      image.onload = function () {
-        const finish = function () { resolve(image); };
-        if (image.decode) image.decode().catch(function () {}).then(finish);
-        else finish();
-      };
-      image.onerror = reject;
-      image.src = items[itemIndex].file;
+  function upgradeOverlay(overlay, index) {
+    preloadPhoto(index).then(image => {
+      if (overlay.isConnected) overlay.querySelector('img').src = image.currentSrc || image.src;
+    }).catch(() => {
+      if (overlay.isConnected) $('#lbStatus').textContent = 'Full resolution unavailable; showing preview.';
     });
-    preloadCache.set(itemIndex, promise);
-    promise.then(
-      function () { preloadCache.delete(itemIndex); },
-      function () { preloadCache.delete(itemIndex); }
-    );
-    return promise;
   }
 
   /* ---------- Camera geometry ---------- */
@@ -597,7 +646,7 @@
     const metrics = focusMetrics();
     const scaleByWidth = metrics.maxWidth / (placement.brick.w * FLOAT_SCALE);
     const scaleByHeight = metrics.maxHeight / (placement.brick.h * FLOAT_SCALE);
-    const scale = Math.max(1.08, Math.min(7, Math.min(scaleByWidth, scaleByHeight)));
+    const scale = Math.max(0.01, Math.min(7, Math.min(scaleByWidth, scaleByHeight)));
     const centerX = placement.x + placement.brick.w / 2;
     const centerY = placement.brick.y + placement.brick.h / 2;
     return {
@@ -642,30 +691,11 @@
   }
 
   function findBrickCopy(row, orderPos, cycle) {
-    return bricks.find(function (brick) {
-      return brick.row === row && brick.orderPos === orderPos && brick.cycle === cycle;
-    }) || null;
+    return mountBrick(geometry.copy(row, orderPos, cycle));
   }
 
   function adjacentPlacement(placement, direction) {
-    if (!placement || items.length < 2) return null;
-    const nextOrderPos = (placement.brick.orderPos + direction + items.length) % items.length;
-    const exemplar = bricks.find(function (brick) {
-      return brick.row === placement.brick.row && brick.orderPos === nextOrderPos;
-    });
-    if (!exemplar) return null;
-
-    const nextX = direction > 0
-      ? placement.x + placement.brick.w + GAP
-      : placement.x - exemplar.w - GAP;
-    const copies = bricks.filter(function (brick) {
-      return brick.row === placement.brick.row && brick.orderPos === nextOrderPos;
-    });
-    let closest = copies[0];
-    copies.forEach(function (brick) {
-      if (Math.abs(brick.x - nextX) < Math.abs(closest.x - nextX)) closest = brick;
-    });
-    return { brick: closest, x: nextX };
+    return placementAfterSteps(placement, direction);
   }
 
   function rebaseActiveToMiddleCycle() {
@@ -710,44 +740,44 @@
 
   function animateWall(fromCamera, toCamera, milliseconds) {
     setWallState(fromCamera);
-    return wall.animate([
+    wall.style.willChange = 'transform';
+    const animation = wall.animate([
       { transform: cameraTransform(fromCamera) },
       { transform: cameraTransform(toCamera) },
     ], animationOptions(milliseconds));
+    cameraFlight = { animation, fromCamera, toCamera };
+    if (cameraFrame) cancelAnimationFrame(cameraFrame);
+    const frame = () => {
+      if (!cameraFlight || cameraFlight.animation !== animation) return;
+      ensureVisibleForCameras([currentCamera()]);
+      if (animation.playState === 'running' || animation.pending) cameraFrame = requestAnimationFrame(frame);
+    };
+    cameraFrame = requestAnimationFrame(frame);
+    return animation;
   }
 
   function setBackdrop(focused) {
-    lightbox.style.backgroundColor = focused ? SHADE_FOCUS : SHADE_CLEAR;
+    focusBackdrop.style.backgroundColor = SHADE_FOCUS;
+    focusBackdrop.style.backdropFilter = focused ? BACKDROP_FOCUS_FILTER : 'none';
+    focusBackdrop.style.webkitBackdropFilter = focused ? BACKDROP_FOCUS_FILTER : 'none';
+    focusBackdrop.style.opacity = focused ? '1' : '0';
   }
 
   function animateBackdrop(fromFocused, toFocused, milliseconds) {
-    setBackdrop(fromFocused);
-    return lightbox.animate([
-      {
-        backgroundColor: fromFocused ? SHADE_FOCUS : SHADE_CLEAR,
-      },
-      {
-        backgroundColor: toFocused ? SHADE_FOCUS : SHADE_CLEAR,
-      },
-    ], animationOptions(milliseconds));
-  }
-
-  function setWallEffect(focused) {
-    wallViewport.style.filter = focused ? WALL_FOCUS_FILTER : WALL_CLEAR_FILTER;
-  }
-
-  function animateWallEffect(fromFocused, toFocused, milliseconds) {
-    setWallEffect(fromFocused);
-    return wallViewport.animate([
-      { filter: fromFocused ? WALL_FOCUS_FILTER : WALL_CLEAR_FILTER },
-      { filter: toFocused ? WALL_FOCUS_FILTER : WALL_CLEAR_FILTER },
+    focusBackdrop.style.backgroundColor = SHADE_FOCUS;
+    focusBackdrop.style.backdropFilter = BACKDROP_FOCUS_FILTER;
+    focusBackdrop.style.webkitBackdropFilter = BACKDROP_FOCUS_FILTER;
+    focusBackdrop.style.opacity = fromFocused ? '1' : '0';
+    return focusBackdrop.animate([
+      { opacity: fromFocused ? 1 : 0 },
+      { opacity: toFocused ? 1 : 0 },
     ], animationOptions(milliseconds));
   }
 
   function depthStyle(depth) {
-    if (depth === 'float') return { shadow: SHADOW_FLOAT, filter: PHOTO_CLEAR_FILTER };
-    if (depth === 'background') return { shadow: SHADOW_FLAT, filter: PHOTO_BACKGROUND_FILTER };
-    return { shadow: SHADOW_FLAT, filter: PHOTO_CLEAR_FILTER };
+    if (depth === 'float') return { shadowOpacity: 1, filter: PHOTO_CLEAR_FILTER };
+    if (depth === 'background') return { shadowOpacity: 0, filter: PHOTO_BACKGROUND_FILTER };
+    return { shadowOpacity: 0, filter: PHOTO_CLEAR_FILTER };
   }
 
   function setOverlayRect(overlay, rect) {
@@ -758,8 +788,8 @@
 
   function setOverlayDepth(overlay, depth) {
     const style = depthStyle(depth);
-    overlay.style.boxShadow = style.shadow;
     overlay.style.filter = style.filter;
+    if (overlay.focusShadow) overlay.focusShadow.style.opacity = String(style.shadowOpacity);
   }
 
   function overlayTransform(rect, baseRect) {
@@ -776,23 +806,57 @@
     overlay.style.height = fromRect.height + 'px';
     overlay.style.transformOrigin = '0 0';
     overlay.style.transform = overlayTransform(fromRect, fromRect);
-    overlay.style.boxShadow = fromStyle.shadow;
     overlay.style.filter = fromStyle.filter;
+    if (overlay.focusShadow) {
+      overlay.focusShadow.style.opacity = String(fromStyle.shadowOpacity);
+    }
+
+    const fromFrame = { transform: overlayTransform(fromRect, fromRect) };
+    const toFrame = { transform: overlayTransform(toRect, fromRect) };
+    if (fromStyle.filter !== toStyle.filter) {
+      fromFrame.filter = fromStyle.filter;
+      toFrame.filter = toStyle.filter;
+    }
+
+    const animations = [overlay.animate([fromFrame, toFrame], animationOptions(milliseconds))];
+    if (overlay.focusShadow && fromStyle.shadowOpacity !== toStyle.shadowOpacity) {
+      animations.push(overlay.focusShadow.animate([
+        { opacity: fromStyle.shadowOpacity },
+        { opacity: toStyle.shadowOpacity },
+      ], animationOptions(milliseconds)));
+    }
+    return animations;
+  }
+
+  function animateOverlayHandoff(overlay, milliseconds) {
+    overlay.style.opacity = '1';
     return overlay.animate([
-      {
-        transform: overlayTransform(fromRect, fromRect),
-        boxShadow: fromStyle.shadow,
-        filter: fromStyle.filter,
-      },
-      {
-        transform: overlayTransform(toRect, fromRect),
-        boxShadow: toStyle.shadow,
-        filter: toStyle.filter,
-      },
+      { opacity: 1, offset: 0 },
+      { opacity: 1, offset: 0.52 },
+      { opacity: 0, offset: 1 },
     ], animationOptions(milliseconds));
   }
 
+  function animateOverlayReveal(overlay, milliseconds) {
+    overlay.style.opacity = '0';
+    return overlay.animate([
+      { opacity: 0, offset: 0 },
+      { opacity: 0, offset: 0.18 },
+      { opacity: 1, offset: 1 },
+    ], animationOptions(milliseconds));
+  }
+
+  function currentCamera() {
+    if (!cameraFlight) return activeCamera || normalCamera();
+    const { animation, fromCamera, toCamera } = cameraFlight;
+    const p = animation.effect.getComputedTiming().progress ?? 0;
+    return { tx: fromCamera.tx + (toCamera.tx - fromCamera.tx) * p,
+      ty: fromCamera.ty + (toCamera.ty - fromCamera.ty) * p,
+      scale: fromCamera.scale + (toCamera.scale - fromCamera.scale) * p };
+  }
+
   async function playTogether(animations) {
+    animations.forEach(animation => scene.animations.add(animation));
     const startTime = document.timeline.currentTime;
     if (startTime !== null) {
       animations.forEach(function (animation) {
@@ -805,21 +869,30 @@
   }
 
   function cancelAnimations(animations) {
-    animations.forEach(function (animation) { animation.cancel(); });
+    animations.forEach(function (animation) { animation.cancel(); scene.animations.delete(animation); });
+    if (cameraFrame) cancelAnimationFrame(cameraFrame);
+    cameraFrame = null; cameraFlight = null;
+    wall.style.willChange = '';
   }
 
   function createOverlay(itemIndex, loadedImage, rect) {
     const overlay = document.createElement('div');
     overlay.className = 'focus-photo';
     overlay.dataset.i = String(itemIndex);
+    const shadow = document.createElement('span');
+    shadow.className = 'focus-shadow';
+    shadow.style.boxShadow = SHADOW_FLOAT;
+    overlay.focusShadow = shadow;
     const image = document.createElement('img');
     image.alt = items[itemIndex].title || '';
     image.draggable = false;
     image.decoding = 'async';
     image.src = loadedImage.currentSrc || loadedImage.src || items[itemIndex].file;
+    overlay.appendChild(shadow);
     overlay.appendChild(image);
     focusLayer.appendChild(overlay);
     setOverlayRect(overlay, rect);
+    upgradeOverlay(overlay, itemIndex);
     return overlay;
   }
 
@@ -842,25 +915,46 @@
     hiddenBricks.clear();
   }
 
+  function primeCloseView() {
+    if (scene.mode !== 'focused' || !activePlacement || !activeCamera) return;
+    const placement = activePlacement;
+    const camera = activeCamera;
+    closePreparation = prepareWallForCameras([
+      camera,
+      wallCameraForPlacement(placement),
+    ]).catch(function () {});
+  }
+
   /* ---------- Open, switch, close ---------- */
   async function openPhoto(itemIndex, sourceElement) {
-    if (viewMode !== 'wall' || itemIndex < 0 || itemIndex >= items.length) return;
+    if (scene.mode !== 'wall' || itemIndex < 0 || itemIndex >= items.length) return;
     const sourceBrick = findBrickByElement(sourceElement);
     if (!sourceBrick) return;
 
     stopInertia();
     stopWheelInertia();
-    viewMode = 'opening';
-    const token = ++sceneToken;
+    closePreparation = null;
+    clearNavigationInput();
+    const token = sceneStart('opening');
+    returnFocus = sourceElement;
+    updateLightboxMeta(items[itemIndex]);
+    $('#lbStatus').textContent = 'Loading photograph…';
+    lightbox.setAttribute('aria-busy', 'true');
+    lightbox.hidden = false;
+    lightbox.classList.add('is-active');
+    stage.inert = true;
+    $('#lbClose').focus({ preventScroll: true });
 
     let loadedImage;
     try {
-      loadedImage = await preloadPhoto(itemIndex);
+      loadedImage = await previewPhoto(itemIndex, sourceBrick);
     } catch (_) {
-      if (token === sceneToken) viewMode = 'wall';
+      if (token === scene.token) { finishClose(); $('#wallStatus').textContent = 'Photograph unavailable. Try another image.'; }
       return;
     }
-    if (token !== sceneToken || viewMode !== 'opening') return;
+    if (token !== scene.token || scene.mode !== 'opening') return;
+    lightbox.removeAttribute('aria-busy');
+    $('#lbStatus').textContent = '';
 
     updateViewport();
     const placement = { brick: sourceBrick, x: sourceBrick.x };
@@ -882,10 +976,11 @@
     updateLightboxMeta(items[itemIndex]);
     ensureVisibleForCameras([sourceCamera, targetCamera]);
     lightbox.hidden = false;
+    stage.inert = true;
+    $('#lbClose').focus({ preventScroll: true });
     lightbox.classList.add('is-active');
     lightbox.classList.remove('is-ready');
     setBackdrop(false);
-    setWallEffect(false);
 
     activeOverlay = createOverlay(itemIndex, loadedImage, sourceRect);
     setOverlayDepth(activeOverlay, 'clear');
@@ -894,42 +989,105 @@
     const animations = [
       animateWall(sourceCamera, targetCamera, CAMERA_MOTION_MS),
       animateBackdrop(false, true, CAMERA_MOTION_MS),
-      animateWallEffect(false, true, CAMERA_MOTION_MS),
-      animateOverlay(activeOverlay, sourceRect, targetRect, 'clear', 'float', CAMERA_MOTION_MS),
+      ...animateOverlay(activeOverlay, sourceRect, targetRect, 'clear', 'float', CAMERA_MOTION_MS),
     ];
     await playTogether(animations);
-    if (token !== sceneToken) return;
+    if (token !== scene.token) return;
 
     setWallState(targetCamera);
     setBackdrop(true);
-    setWallEffect(true);
     setOverlayRect(activeOverlay, targetRect);
     setOverlayDepth(activeOverlay, 'float');
     cancelAnimations(animations);
     rebaseActiveToMiddleCycle();
     ensureVisibleForCameras([activeCamera, wallCameraForPlacement(activePlacement)]);
     lightbox.classList.add('is-ready');
-    viewMode = 'focused';
+    scene.set('focused');
+    stage.dataset.mode = scene.mode;
+    syncPhotoURL(itemIndex);
+    primeCloseView();
   }
 
-  async function navigate(direction) {
-    if (viewMode !== 'focused' || items.length < 2) return;
-    const nextPlacement = adjacentPlacement(activePlacement, direction);
+  function clearNavigationInput() {
+    if (navigationBurstTimer !== null) clearTimeout(navigationBurstTimer);
+    navigationBurstTimer = null;
+    pendingNavigationSteps = 0;
+    activeSwitchSteps = 0;
+    lightboxWheelDelta = 0;
+    lightboxWheelDirection = 0;
+    lightboxWheelLastInput = 0;
+  }
+
+  function wrappedOrderPos(orderPos) {
+    return ((orderPos % items.length) + items.length) % items.length;
+  }
+
+  function placementAfterSteps(placement, steps) {
+    if (!placement) return null;
+    const logical = geometry.at(placement.brick.row, placement.brick.ordinal + steps);
+    const brick = mountBrick(logical);
+    return { brick, x: logical.x };
+  }
+
+  function directSwitchDuration(steps) {
+    const distance = Math.max(1, Math.abs(steps));
+    if (distance === 1) return SWITCH_MOTION_MS;
+    return Math.min(DIRECT_SWITCH_MAX_MS,
+      SWITCH_MOTION_MS + Math.log2(distance) * 120);
+  }
+
+  function warmPendingNavigation() {
+    if (!pendingNavigationSteps || activeOrderPos < 0) return;
+    const predictedSteps = activeSwitchSteps + pendingNavigationSteps;
+    const orderPos = wrappedOrderPos(activeOrderPos + predictedSteps);
+    preloadPhoto(displayOrder[orderPos], 2).catch(function () {});
+    ensureVisibleForCameras([currentCamera()]);
+  }
+
+  function flushNavigationInput() {
+    navigationBurstTimer = null;
+    if (scene.mode !== 'focused' || !pendingNavigationSteps) return;
+    const steps = pendingNavigationSteps;
+    pendingNavigationSteps = 0;
+    navigate(steps);
+  }
+
+  function scheduleNavigationFlight() {
+    if (navigationBurstTimer !== null) clearTimeout(navigationBurstTimer);
+    navigationBurstTimer = setTimeout(flushNavigationInput, NAVIGATION_BURST_MS);
+  }
+
+  function requestNavigation(direction) {
+    if (items.length < 2 || (direction !== -1 && direction !== 1)) return;
+    if (scene.mode !== 'focused' && scene.mode !== 'switching') return;
+    pendingNavigationSteps += direction;
+    warmPendingNavigation();
+    if (scene.mode === 'focused') scheduleNavigationFlight();
+  }
+
+  async function navigate(steps) {
+    if (scene.mode !== 'focused' || items.length < 2 || !steps) return;
+    const nextPlacement = placementAfterSteps(activePlacement, steps);
     if (!nextPlacement) return;
 
-    const nextOrderPos = (activeOrderPos + direction + items.length) % items.length;
+    const nextOrderPos = wrappedOrderPos(activeOrderPos + steps);
     const nextIndex = displayOrder[nextOrderPos];
-    viewMode = 'switching';
-    const token = ++sceneToken;
+    const motionMs = directSwitchDuration(steps);
+    const token = sceneStart('switching');
+    activeSwitchSteps = steps;
 
     let loadedImage;
     try {
-      loadedImage = await preloadPhoto(nextIndex);
+      loadedImage = await previewPhoto(nextIndex, nextPlacement.brick);
     } catch (_) {
-      if (token === sceneToken) viewMode = 'focused';
+      if (token === scene.token) {
+        activeSwitchSteps = 0;
+        scene.set('focused');
+        flushNavigationInput();
+      }
       return;
     }
-    if (token !== sceneToken || viewMode !== 'switching') return;
+    if (token !== scene.token || scene.mode !== 'switching') return;
 
     const previousPlacement = activePlacement;
     const previousCamera = activeCamera;
@@ -940,41 +1098,47 @@
     const nextStartingRect = rectForPlacement(nextPlacement, previousCamera);
     const nextFloatRect = floatingRect(nextPlacement, nextCamera);
 
-    ensureVisibleForCameras([previousCamera, nextCamera]);
+    await prepareWallForCameras([previousCamera, nextCamera]);
+    if (token !== scene.token || scene.mode !== 'switching') return;
     const incomingOverlay = createOverlay(nextIndex, loadedImage, nextStartingRect);
+    incomingOverlay.style.opacity = '0';
     incomingOverlay.classList.add('incoming');
     previousOverlay.classList.add('outgoing');
     setOverlayDepth(incomingOverlay, 'background');
-    hideBrick(nextPlacement.brick);
+    showBrick(previousPlacement.brick);
     updateLightboxMeta(items[nextIndex]);
 
     const animations = [
-      animateWall(previousCamera, nextCamera, SWITCH_MOTION_MS),
-      animateOverlay(
+      animateWall(previousCamera, nextCamera, motionMs),
+      ...animateOverlay(
         previousOverlay,
         previousFloatRect,
         previousLandingRect,
         'float',
-        'background',
-        SWITCH_MOTION_MS
+        'clear',
+        motionMs
       ),
-      animateOverlay(
+      animateOverlayHandoff(previousOverlay, motionMs),
+      ...animateOverlay(
         incomingOverlay,
         nextStartingRect,
         nextFloatRect,
         'background',
         'float',
-        SWITCH_MOTION_MS
+        motionMs
       ),
+      animateOverlayReveal(incomingOverlay, motionMs),
     ];
     await playTogether(animations);
-    if (token !== sceneToken) return;
+    if (token !== scene.token) return;
 
     setWallState(nextCamera);
     setOverlayRect(incomingOverlay, nextFloatRect);
     setOverlayDepth(incomingOverlay, 'float');
+    incomingOverlay.style.opacity = '1';
+    previousOverlay.style.opacity = '0';
+    hideBrick(nextPlacement.brick);
     cancelAnimations(animations);
-    showBrick(previousPlacement.brick);
     previousOverlay.remove();
     incomingOverlay.classList.remove('incoming');
 
@@ -986,13 +1150,43 @@
     activeOverlayRect = nextFloatRect;
     rebaseActiveToMiddleCycle();
     ensureVisibleForCameras([activeCamera, wallCameraForPlacement(activePlacement)]);
-    viewMode = 'focused';
+    activeSwitchSteps = 0;
+    scene.set('focused');
+    stage.dataset.mode = scene.mode;
+    syncPhotoURL(nextIndex);
+    if (!pendingNavigationSteps) primeCloseView();
+    flushNavigationInput();
   }
 
-  async function closePhoto() {
-    if (viewMode !== 'focused' || !activePlacement || !activeOverlay) return;
-    viewMode = 'closing';
-    const token = ++sceneToken;
+  function closePhoto() {
+    if (closingPromise) return closingPromise;
+    if (scene.mode === 'wall') return Promise.resolve();
+    closingPromise = performClosePhoto().finally(() => { closingPromise = null; });
+    return closingPromise;
+  }
+
+  async function performClosePhoto() {
+    if (scene.mode === 'wall' || scene.mode === 'closing') return;
+    const interrupted = scene.mode !== 'focused';
+    const displayedCamera = currentCamera();
+    const displayedRect = activeOverlay ? activeOverlay.getBoundingClientRect() : null;
+    const token = sceneStart('closing');
+    clearNavigationInput();
+    cancelAnimations([...scene.animations]);
+    if (!activePlacement || !activeOverlay) {
+      finishClose(); return;
+    }
+    if (interrupted) {
+      activeCamera = displayedCamera;
+      activeOverlayRect = { left: displayedRect.left, top: displayedRect.top,
+        width: displayedRect.width, height: displayedRect.height };
+      focusLayer.querySelectorAll('.focus-photo').forEach(el => { if (el !== activeOverlay) el.remove(); });
+      activeOverlay.classList.remove('outgoing', 'incoming');
+      activeOverlay.style.opacity = '1';
+      setOverlayRect(activeOverlay, activeOverlayRect);
+      setOverlayDepth(activeOverlay, 'float');
+      hideBrick(activePlacement.brick);
+    }
     lightbox.classList.remove('is-ready');
 
     const fromCamera = activeCamera;
@@ -1000,20 +1194,30 @@
     const finalPan = toCamera.tx;
     const fromRect = activeOverlayRect;
     const toRect = rectForPlacement(activePlacement, toCamera);
-    ensureVisibleForCameras([fromCamera, toCamera]);
+    const preparedCloseView = closePreparation
+      || prepareWallForCameras([fromCamera, toCamera]);
+    closePreparation = null;
+    await preparedCloseView;
+    if (token !== scene.token || scene.mode !== 'closing') return;
 
+    const backdropAnimation = animateBackdrop(true, false, CLOSE_BACKDROP_MS);
     const animations = [
       animateWall(fromCamera, toCamera, CAMERA_MOTION_MS),
-      animateBackdrop(true, false, CAMERA_MOTION_MS),
-      animateWallEffect(true, false, CAMERA_MOTION_MS),
-      animateOverlay(activeOverlay, fromRect, toRect, 'float', 'clear', CAMERA_MOTION_MS),
+      backdropAnimation,
+      ...animateOverlay(activeOverlay, fromRect, toRect, 'float', 'clear', CAMERA_MOTION_MS),
     ];
+    backdropAnimation.finished.then(function () {
+      if (token !== scene.token || scene.mode !== 'closing') return;
+      focusBackdrop.style.opacity = '0';
+      focusBackdrop.style.backdropFilter = 'none';
+      focusBackdrop.style.webkitBackdropFilter = 'none';
+      backdropAnimation.cancel();
+    }).catch(function () {});
     await playTogether(animations);
-    if (token !== sceneToken) return;
+    if (token !== scene.token) return;
 
     setWallState(toCamera);
     setBackdrop(false);
-    setWallEffect(false);
     setOverlayRect(activeOverlay, toRect);
     setOverlayDepth(activeOverlay, 'clear');
     cancelAnimations(animations);
@@ -1027,25 +1231,76 @@
     lightbox.classList.remove('is-active', 'is-ready');
     clearHiddenBricks();
 
-    activeIndex = -1;
-    activeOrderPos = -1;
-    activePlacement = null;
-    activeCamera = null;
-    activeOverlayRect = null;
-    viewMode = 'wall';
-    applyPan();
+    finishClose();
+  }
 
-    if (layoutDeferred) {
-      layoutDeferred = false;
-      layout();
+  function finishClose() {
+    activeIndex = -1; activeOrderPos = -1;
+    activePlacement = null; activeCamera = null; activeOverlay = null; activeOverlayRect = null;
+    closePreparation = null;
+    focusLayer.textContent = '';
+    clearHiddenBricks();
+    clearNavigationInput();
+    lightbox.hidden = true; lightbox.classList.remove('is-active', 'is-ready');
+    lightbox.removeAttribute('aria-busy');
+    stage.inert = false;
+    scene.set('wall'); stage.dataset.mode = scene.mode;
+    setBackdrop(false); applyPan();
+    if (layoutDeferred) { layoutDeferred = false; layout(); }
+    else ensureVisibleForCameras([normalCamera()]);
+    if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+    else stage.focus({ preventScroll: true });
+    returnFocus = null;
+    syncPhotoURL(null);
+    rememberView();
+  }
+
+  function syncPhotoURL(index) {
+    if (historyUpdating) return;
+    const url = new URL(location.href);
+    if (index === null) {
+      url.hash = '';
+      if (historyEntry) { historyEntry = false; history.back(); }
+      else history.replaceState(null, '', url);
     } else {
-      ensureVisibleForCameras([normalCamera()]);
+      const hadPhoto = new URLSearchParams(url.hash.slice(1)).has('photo');
+      url.hash = new URLSearchParams({ photo: items[index].id }).toString();
+      if (hadPhoto) history.replaceState(history.state, '', url);
+      else { history.pushState({ gallery: true }, '', url); historyEntry = true; }
+      $('#lbPermalink').href = data.build ? new URL('photo/' + encodeURIComponent(items[index].id) + '.html', url).href : url.href;
     }
   }
+
+  async function openFromURL() {
+    routePending = true;
+    if (routing) return;
+    routing = true;
+    historyUpdating = true;
+    try {
+      while (routePending) {
+        routePending = false;
+        const id = new URLSearchParams(location.hash.slice(1)).get('photo');
+        historyEntry = !!(history.state && history.state.gallery);
+        if (scene.mode !== 'wall') await closePhoto();
+        if (routePending) continue;
+        if (id && itemById.has(id)) {
+          const index = itemById.get(id);
+          const brick = findBrickCopy(0, orderPosByItem[index], 1);
+          setPan(vw / 2 - brick.x - brick.w / 2);
+          await openPhoto(index, brick.el);
+          $('#lbPermalink').href = data.build ? new URL('photo/' + encodeURIComponent(id) + '.html', location.href).href : location.href;
+        }
+      }
+    } finally { historyUpdating = false; routing = false; }
+  }
+  window.addEventListener('popstate', openFromURL);
 
   /* ---------- Metadata ---------- */
   function updateLightboxMeta(item) {
     lbTitle.textContent = item.title || 'Untitled';
+    $('#lbDescription').textContent = item.description || '';
+    $('#lbDescription').hidden = !item.description;
+    $('#lbPermalink').hidden = !rawConfig.showShare;
     lbCat.hidden = !item.category;
     if (item.category) lbCat.textContent = '#' + item.category;
     lbChips.textContent = '';
@@ -1087,28 +1342,55 @@
 
   /* ---------- Lightbox and resize events ---------- */
   $('#lbClose').addEventListener('click', closePhoto);
-  $('#lbPrev').addEventListener('click', function () { navigate(-1); });
-  $('#lbNext').addEventListener('click', function () { navigate(1); });
+  $('#lbPrev').addEventListener('click', function () { requestNavigation(-1); });
+  $('#lbNext').addEventListener('click', function () { requestNavigation(1); });
+  lightbox.addEventListener('wheel', beginLightboxWheelNavigation, { passive: false });
   lightbox.addEventListener('pointerdown', function (event) {
     if (event.target === lightbox) closePhoto();
   });
   document.addEventListener('keydown', function (event) {
-    if (viewMode !== 'focused') return;
-    if (event.key === 'Escape') closePhoto();
-    else if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'PageDown') navigate(1);
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'PageUp') navigate(-1);
+    if (event.key === 'Escape' && scene.mode !== 'wall') { event.preventDefault(); closePhoto(); return; }
+    if (scene.mode !== 'wall') {
+      if (event.key === 'Tab') {
+        const controls = [...lightbox.querySelectorAll('button, a[href]')].filter(el => !el.hidden);
+        const current = controls.indexOf(document.activeElement);
+        event.preventDefault();
+        controls[GalleryLayout.mod(current + (event.shiftKey ? -1 : 1), controls.length)].focus();
+      } else if (['ArrowRight', 'ArrowDown', 'PageDown'].includes(event.key)) {
+        event.preventDefault(); requestNavigation(1);
+      } else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) {
+        event.preventDefault(); requestNavigation(-1);
+      }
+      return;
+    }
+    if (!stage.contains(document.activeElement)) return;
+    const focused = brickByElement.get(document.activeElement);
+    if (event.key === 'Enter' || event.key === ' ') {
+      if (focused) { event.preventDefault(); openPhoto(focused.itemIdx, focused.el); }
+    } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) {
+      event.preventDefault();
+      const direction = ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key) ? -1 : 1;
+      const base = focused || findBrickCopy(0, orderPosByItem[keyboardIndex], 1);
+      const next = mountBrick(geometry.at(base.row, base.ordinal + direction));
+      keyboardIndex = next.itemIdx;
+      setPan(vw / 2 - next.x - next.w / 2);
+      ensureVisibleForCameras([normalCamera()]);
+      const target = bricks.find(b => b.itemIdx === keyboardIndex && b.el.getAttribute('aria-hidden') !== 'true');
+      if (target) target.el.focus({ preventScroll: true });
+    }
   });
 
   let resizeTimer = null;
   function handleResize() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
-      if (viewMode === 'wall') {
+      if (scene.mode === 'wall') {
         layout();
         return;
       }
-      if (viewMode !== 'focused' || !activePlacement) {
+      if (scene.mode !== 'focused' || !activePlacement) {
         layoutDeferred = true;
+        if (scene.mode !== 'closing') closePhoto();
         return;
       }
       updateViewport();
@@ -1118,19 +1400,12 @@
       setOverlayRect(activeOverlay, activeOverlayRect);
       ensureVisibleForCameras([activeCamera]);
       layoutDeferred = true;
+      closePreparation = null;
+      if (activeOverlay) upgradeOverlay(activeOverlay, activeIndex);
     }, 120);
   }
   window.addEventListener('resize', handleResize);
   window.addEventListener('orientationchange', handleResize);
-
-  function shuffle(list) {
-    for (let index = list.length - 1; index > 0; index--) {
-      const randomIndex = Math.floor(Math.random() * (index + 1));
-      const value = list[index];
-      list[index] = list[randomIndex];
-      list[randomIndex] = value;
-    }
-  }
 
   function tone(index) {
     return 'hsl(' + ((index * 137.508) % 360 | 0) + ',42%,19%)';
@@ -1138,4 +1413,11 @@
 
   setTimeout(function () { hint.classList.add('gone'); }, 7000);
   layout();
+  stage.dataset.mode = scene.mode;
+  if (location.hash) openFromURL();
+  window.addEventListener('pagehide', () => { rememberView(); stopInertia(); stopWheelInertia(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { rememberView(); stopInertia(); stopWheelInertia(); imageLoader.prune(new Set()); }
+    else { imageLoader.resume(); if (scene.mode === 'wall') ensureVisibleForCameras([normalCamera()]); }
+  });
 })();

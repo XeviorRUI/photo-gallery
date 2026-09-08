@@ -4,8 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Photography Portfolio &middot; MY GALLERY</title>
-<script src="config.js?v=20260904-deployment-build"></script>
-<link rel="stylesheet" href="assets/style.css?v=20260904-deployment-build" />
+<script src="config.js?v=20260904-faster-close"></script>
+<link rel="stylesheet" href="assets/style.css?v=20260904-faster-close" />
 </head>
 <body>
 
@@ -16,25 +16,24 @@
       <p class="site-sub" id="siteSubtitle">Photography portfolio &middot; drag to explore, click to open</p>
     </div>
     <div class="meta" id="wallMeta"></div>
+    <select class="collections" id="collections" aria-label="Collection" hidden></select>
   </div>
 </header>
 
-<main class="stage" id="stage">
-  <div class="wall-viewport" id="wallViewport">
-    <div class="wall" id="wall" aria-label="Photo wall"></div>
-  </div>
+<main class="stage" id="stage" tabindex="-1">
+  <div class="wall" id="wall" aria-label="Photo wall"></div>
 
   <div class="empty" id="emptyState" hidden>
     <p class="empty-title">No photographs yet</p>
-    <p class="empty-tip">1. Add photographs to the <code>photos/</code> folder (subfolders become categories)<br />
-       2. Run <code>scan.ps1</code> to rebuild the index<br />
-       3. Refresh this page to view the wall</p>
+    <p class="empty-tip">There are no photographs in this collection yet.</p>
   </div>
 
   <div class="hint" id="hint">Drag or scroll to browse &middot; click a photograph for details</div>
+  <p class="sr-only" id="wallStatus" role="status"></p>
 </main>
 
-<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Photograph details">
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-labelledby="lbTitle" aria-describedby="lbDescription">
+  <div class="focus-backdrop" id="focusBackdrop" aria-hidden="true"></div>
   <button class="lb-btn lb-close" id="lbClose" aria-label="Close">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
   </button>
@@ -51,12 +50,19 @@
     <div class="lb-title-row">
       <h2 class="lb-title" id="lbTitle"></h2>
       <span class="lb-cat" id="lbCat" hidden></span>
+      <a class="lb-cat permalink" id="lbPermalink" hidden>Permalink</a>
     </div>
+    <p class="lb-description" id="lbDescription" hidden></p>
     <div class="lb-chips" id="lbChips"></div>
+    <p class="sr-only" id="lbStatus" role="status"></p>
   </div>
 </div>
 
-<script src="gallery.js?v=20260904-deployment-build"></script>
-<script src="assets/main.js?v=20260904-deployment-build"></script>
+<script src="gallery.js?v=20260904-faster-close"></script>
+<script src="assets/catalog.js?v=20260905"></script>
+<script src="assets/layout.js?v=20260905"></script>
+<script src="assets/image-loader.js?v=20260905"></script>
+<script src="assets/scene.js?v=20260905"></script>
+<script src="assets/main.js?v=20260904-faster-close"></script>
 </body>
 </html>

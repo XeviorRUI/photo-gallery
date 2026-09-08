@@ -1,2 +1,5 @@
 dist/
-
+.work/
+.gallery-cache/
+.gallery-build-*/
+.gallery-backup-*/
