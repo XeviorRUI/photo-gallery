@@ -23,8 +23,13 @@
       return at(rowId, cycle * count + mod(orderPos - definitions.get(rowId).offset, count));
     }
     function query(left, right, top = -Infinity, bottom = Infinity) {
-      if (!count || !cycleWidth) return [];
       const result = [];
+      visit(left, right, top, bottom, (row, ordinal) => result.push(at(row, ordinal)));
+      return result;
+    }
+    // Visit logical positions without allocating a descriptor for every frame.
+    function visit(left, right, top, bottom, callback) {
+      if (!count || !cycleWidth) return;
       for (const row of definitions.values()) {
         if (row.y + height < top || row.y > bottom) continue;
         let cycle = Math.floor((left - padding) / cycleWidth);
@@ -36,13 +41,17 @@
           else high = mid;
         }
         let ordinal = cycle * count + Math.min(low, count - 1);
-        for (let brick = at(row.row, ordinal); brick.x <= right; brick = at(row.row, ++ordinal)) {
-          if (brick.x + brick.w >= left) result.push(brick);
+        let position = mod(ordinal, count);
+        let x = padding + Math.floor(ordinal / count) * cycleWidth + row.prefix[position];
+        while (x <= right) {
+          const width = widths[mod(row.offset + position, count)];
+          if (x + width >= left) callback(row.row, ordinal);
+          x += width + gap;
+          ordinal++; position = mod(position + 1, count);
         }
       }
-      return result;
     }
-    return { at, copy, query, cycleWidth, count };
+    return { at, copy, query, visit, cycleWidth, count };
   }
   const api = { create, mod };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

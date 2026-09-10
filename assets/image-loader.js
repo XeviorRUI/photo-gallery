@@ -3,9 +3,10 @@
   'use strict';
   const cancelled = () => Object.assign(new Error('Image no longer needed'), { name: 'AbortError' });
   function create({ concurrency = 4, maxEntries = 48, maxPixels = 36000000, timeout = 10000,
-    makeImage = () => new Image(), hidden = () => document.hidden } = {}) {
+    foregroundSlots = 1, makeImage = () => new Image(), hidden = () => document.hidden } = {}) {
     const jobs = new Map();
-    let running = 0, serial = 0;
+    const backgroundLimit = Math.max(1, concurrency - foregroundSlots);
+    let running = 0, serial = 0, paused = false;
     function trim() {
       let ready = [...jobs.values()].filter(j => j.image);
       let pixels = ready.reduce((sum, j) => sum + j.pixels, 0);
@@ -17,14 +18,18 @@
       }
     }
     function pump() {
-      const queued = [...jobs.values()].filter(j => j.state === 'queued' && (!hidden() || j.priority <= 0));
+      const queued = [...jobs.values()].filter(j => j.state === 'queued' && (!(paused || hidden()) || j.priority <= 0));
       queued.sort((a, b) => a.priority - b.priority || a.used - b.used);
-      while (running < concurrency && queued.length) start(queued.shift());
+      while (running < concurrency && queued.length) {
+        if (queued[0].priority > 0 && running >= backgroundLimit) break;
+        start(queued.shift());
+      }
     }
     function start(job) {
       running++;
       job.state = 'loading';
       const image = makeImage();
+      job.request = image;
       image.decoding = 'async';
       image.fetchPriority = job.priority <= 0 ? 'high' : job.priority >= 2 ? 'low' : 'auto';
       let done = false;
@@ -33,6 +38,7 @@
         done = true;
         clearTimeout(timer);
         image.onload = image.onerror = null;
+        job.request = null;
         running--;
         if (error) {
           if (jobs.get(job.src) === job) jobs.delete(job.src);
@@ -61,6 +67,7 @@
       if (existing) {
         existing.used = ++serial;
         existing.priority = Math.min(existing.priority, priority);
+        if (existing.request && priority <= 0) existing.request.fetchPriority = 'high';
         pump(); return existing.promise;
       }
       const job = { src, priority, state: 'queued', used: ++serial };
@@ -83,14 +90,17 @@
       for (const job of jobs.values()) if (job.cancel) job.cancel();
       jobs.clear();
     }
-    return { load, prune, resume: pump, dispose,
+    return { load, prune, pause: () => { paused = true; }, resume: () => { paused = false; pump(); }, dispose,
       stats: () => ({ entries: jobs.size, running,
+        queued: [...jobs.values()].filter(j => j.state === 'queued').length,
         pixels: [...jobs.values()].reduce((sum, j) => sum + (j.pixels || 0), 0) }) };
   }
+  const orderedVariants = new WeakMap();
   function source(item, side, detail) {
     const variants = detail ? item.details : item.thumbnails;
     if (Array.isArray(variants) && variants.length) {
-      const sorted = variants.slice().sort((a, b) => a.side - b.side);
+      let sorted = orderedVariants.get(variants);
+      if (!sorted) { sorted = variants.slice().sort((a, b) => a.side - b.side); orderedVariants.set(variants, sorted); }
       return (sorted.find(v => v.side >= side) || sorted[sorted.length - 1]).file;
     }
     return detail ? item.file : (item.thumb || item.file);

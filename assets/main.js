@@ -81,6 +81,11 @@
   const hiddenBricks = new Set();
   const imageLoader = GalleryImages.create();
   const mounted = new Map();
+  const brickPool = [];
+  const wanted = new Map(), semantic = new Map(), keepSources = new Set();
+  const foregroundSources = new Map(), warmSources = new Set();
+  const swipe = GallerySwipe.create();
+  let swipeBackdrop = false, navigationDirection = 1;
   const scene = GalleryScene.create(mode => { stage.dataset.mode = mode; });
   let geometry = null;
   let cameraFlight = null;
@@ -229,7 +234,7 @@
       decorative: true,
     });
 
-    mounted.forEach(brick => brick.el.remove());
+    mounted.forEach(recycleBrick);
     mounted.clear();
     bricks.length = 0;
     geometry = GalleryLayout.create(widths, rowDefinitions, rowH, GAP, PAD_X);
@@ -477,7 +482,7 @@
     beginInteraction(event, false);
     if (interaction) {
       interaction.pointerId = event.pointerId;
-      stage.setPointerCapture(event.pointerId);
+      try { stage.setPointerCapture(event.pointerId); } catch (_) {}
     }
   });
   stage.addEventListener('pointermove', event => {
@@ -509,8 +514,9 @@
   function mountBrick(spec) {
     if (mounted.has(spec.key)) return mounted.get(spec.key);
     const brick = { ...spec, itemIdx: displayOrder[spec.orderPos] };
-    const element = document.createElement('div');
-    const image = document.createElement('img');
+    const recycled = brickPool.pop();
+    const element = recycled ? recycled.el : document.createElement('div');
+    const image = recycled ? recycled.img : document.createElement('img');
     brick.el = element; brick.img = image;
     element.className = 'brick ready' + (brick.decorative ? ' decorative' : '');
     Object.assign(element.dataset, { i: brick.itemIdx, orderPos: brick.orderPos, row: brick.row, cycle: brick.cycle });
@@ -519,33 +525,46 @@
     element.setAttribute('role', 'button');
     element.setAttribute('aria-label', items[brick.itemIdx].title || 'Untitled');
     element.tabIndex = -1;
+    element.setAttribute('aria-hidden', 'true');
     image.alt = ''; image.draggable = false; image.decoding = 'async';
     element.appendChild(image); wall.appendChild(element);
     mounted.set(brick.key, brick); brickByElement.set(element, brick);
     const src = wallSourceForItem(items[brick.itemIdx], Math.max(brick.w, brick.h));
     brick.src = src;
     imageLoader.load(src, 1).catch(error => {
-      if (error.name === 'AbortError' || !element.isConnected) throw error;
-      return imageLoader.load(items[brick.itemIdx].file, 1);
+      if (error.name === 'AbortError' || brickByElement.get(element) !== brick) throw error;
+      brick.src = items[brick.itemIdx].file;
+      return imageLoader.load(brick.src, 1);
     }).then(loaded => {
-      if (!element.isConnected) return;
+      if (brickByElement.get(element) !== brick) return;
       image.src = loaded.currentSrc || loaded.src;
       image.classList.add('in');
     }).catch(error => {
-      if (element.isConnected && error.name !== 'AbortError') element.classList.add('image-unavailable');
+      if (brickByElement.get(element) === brick && error.name !== 'AbortError') element.classList.add('image-unavailable');
     });
     return brick;
   }
 
+  function recycleBrick(brick) {
+    brickByElement.delete(brick.el);
+    brick.el.remove();
+    brick.img.removeAttribute('src');
+    brick.img.className = '';
+    // Bound detached nodes as well as mounted nodes. Async callbacks check ownership.
+    if (brickPool.length < 32) brickPool.push(brick);
+  }
+
   function ensureVisibleForCameras(cameras) {
     if (!geometry || !cameras.length) return;
-    const wanted = new Map();
+    wanted.clear();
     cameras.forEach(camera => {
       const scale = Math.max(0.01, camera.scale);
       const margin = vw * PREFETCH / scale;
-      geometry.query(-camera.tx / scale - margin, (vw - camera.tx) / scale + margin,
-        -camera.ty / scale - rowH, (vh - camera.ty) / scale + rowH)
-        .forEach(brick => wanted.set(brick.key, brick));
+      geometry.visit(-camera.tx / scale - margin, (vw - camera.tx) / scale + margin,
+        -camera.ty / scale - rowH, (vh - camera.ty) / scale + rowH, (row, ordinal) => {
+          const key = row + ':' + ordinal;
+          if (!wanted.has(key)) wanted.set(key, mounted.get(key) || geometry.at(row, ordinal));
+        });
     });
     hiddenBricks.forEach(brick => wanted.set(brick.key, brick));
     if (activePlacement) wanted.set(activePlacement.brick.key, activePlacement.brick);
@@ -555,28 +574,41 @@
     }
     const focused = brickByElement.get(document.activeElement);
     if (focused) wanted.set(focused.key, focused);
+    const returning = brickByElement.get(returnFocus);
+    if (returning) wanted.set(returning.key, returning);
     mounted.forEach((brick, key) => {
-      if (!wanted.has(key)) { brick.el.remove(); mounted.delete(key); }
+      if (!wanted.has(key)) { recycleBrick(brick); mounted.delete(key); }
     });
     wanted.forEach(mountBrick);
     bricks.length = 0;
     mounted.forEach(brick => bricks.push(brick));
-    const semantic = new Map();
+    semantic.clear();
     bricks.forEach(brick => {
-      if (brick.el.tabIndex !== -1) brick.el.tabIndex = -1;
-      if (brick.el.getAttribute('aria-hidden') !== 'true') brick.el.setAttribute('aria-hidden', 'true');
       if (brick.decorative) return;
       const previous = semantic.get(brick.itemIdx);
       if (!previous || Math.abs(brick.x + pan + brick.w / 2 - vw / 2)
         < Math.abs(previous.x + pan + previous.w / 2 - vw / 2)) semantic.set(brick.itemIdx, brick);
     });
-    semantic.forEach(brick => brick.el.removeAttribute('aria-hidden'));
-    const keyboardBrick = semantic.get(keyboardIndex) || [...semantic.values()][0];
-    if (keyboardBrick) keyboardBrick.el.tabIndex = 0;
-    const keep = new Set(bricks.map(brick => brick.src));
-    if (activeIndex >= 0) keep.add(detailSource(activeIndex));
-    if (pendingNavigationSteps && activeOrderPos >= 0) keep.add(detailSource(displayOrder[wrappedOrderPos(activeOrderPos + activeSwitchSteps + pendingNavigationSteps)]));
-    imageLoader.prune(keep);
+    const keyboardBrick = semantic.get(keyboardIndex) || semantic.values().next().value;
+    bricks.forEach(brick => {
+      const hidden = semantic.get(brick.itemIdx) !== brick;
+      if (hidden !== brick.el.hasAttribute('aria-hidden')) {
+        if (hidden) brick.el.setAttribute('aria-hidden', 'true');
+        else brick.el.removeAttribute('aria-hidden');
+      }
+      const tabIndex = brick === keyboardBrick ? 0 : -1;
+      if (brick.el.tabIndex !== tabIndex) brick.el.tabIndex = tabIndex;
+    });
+    pruneImages();
+  }
+
+  function pruneImages() {
+    keepSources.clear();
+    mounted.forEach(brick => keepSources.add(brick.src));
+    foregroundSources.forEach((count, src) => keepSources.add(src));
+    warmSources.forEach(src => keepSources.add(src));
+    if (activeIndex >= 0) keepSources.add(detailSource(activeIndex));
+    imageLoader.prune(keepSources);
   }
 
   function prepareWallForCameras(cameras) {
@@ -600,9 +632,21 @@
     return GalleryImages.source(items[index], Math.max(height, height * aspect) * (window.devicePixelRatio || 1), true);
   }
 
-  function preloadPhoto(index, priority = 0) { return imageLoader.load(detailSource(index), priority); }
+  function loadForeground(src) {
+    foregroundSources.set(src, (foregroundSources.get(src) || 0) + 1);
+    return imageLoader.load(src, 0).finally(() => {
+      const remaining = foregroundSources.get(src) - 1;
+      if (remaining) foregroundSources.set(src, remaining);
+      else foregroundSources.delete(src);
+    });
+  }
 
-  function sceneStart(mode) { return scene.begin(mode); }
+  function preloadPhoto(index, priority = 0) {
+    const src = detailSource(index);
+    return priority === 0 ? loadForeground(src) : imageLoader.load(src, priority);
+  }
+
+  function sceneStart(mode) { swipe.reset(); return scene.begin(mode); }
 
   function previewPhoto(index, sourceBrick) {
     if (sourceBrick && sourceBrick.img.complete && sourceBrick.img.naturalWidth) return Promise.resolve(sourceBrick.img);
@@ -610,8 +654,11 @@
     return new Promise((resolve, reject) => {
       const abort = () => reject(new Error('Scene cancelled'));
       signal.addEventListener('abort', abort, { once: true });
-      imageLoader.load(wallSourceForItem(items[index]), 0)
-        .catch(() => preloadPhoto(index)).then(resolve, reject)
+      loadForeground(wallSourceForItem(items[index]))
+        .catch(error => {
+          if (signal.aborted || error.name === 'AbortError') throw error;
+          return preloadPhoto(index);
+        }).then(resolve, reject)
         .finally(() => signal.removeEventListener('abort', abort));
     });
   }
@@ -1003,6 +1050,7 @@
     ensureVisibleForCameras([activeCamera, wallCameraForPlacement(activePlacement)]);
     lightbox.classList.add('is-ready');
     scene.set('focused');
+    warmPendingNavigation();
     stage.dataset.mode = scene.mode;
     syncPhotoURL(itemIndex);
     primeCloseView();
@@ -1037,11 +1085,16 @@
   }
 
   function warmPendingNavigation() {
-    if (!pendingNavigationSteps || activeOrderPos < 0) return;
+    warmSources.clear();
+    if (activeOrderPos < 0 || document.hidden || navigator.connection?.saveData) return;
     const predictedSteps = activeSwitchSteps + pendingNavigationSteps;
     const orderPos = wrappedOrderPos(activeOrderPos + predictedSteps);
-    preloadPhoto(displayOrder[orderPos], 2).catch(function () {});
-    ensureVisibleForCameras([currentCamera()]);
+    // Warm the requested destination, then one neighbour in the last travel direction.
+    const positions = pendingNavigationSteps ? [orderPos, wrappedOrderPos(orderPos + navigationDirection)]
+      : [wrappedOrderPos(orderPos + navigationDirection)];
+    positions.forEach(position => warmSources.add(detailSource(displayOrder[position])));
+    pruneImages();
+    warmSources.forEach(src => imageLoader.load(src, 2).catch(function () {}));
   }
 
   function flushNavigationInput() {
@@ -1061,6 +1114,7 @@
     if (items.length < 2 || (direction !== -1 && direction !== 1)) return;
     if (scene.mode !== 'focused' && scene.mode !== 'switching') return;
     pendingNavigationSteps += direction;
+    navigationDirection = direction;
     warmPendingNavigation();
     if (scene.mode === 'focused') scheduleNavigationFlight();
   }
@@ -1152,6 +1206,7 @@
     ensureVisibleForCameras([activeCamera, wallCameraForPlacement(activePlacement)]);
     activeSwitchSteps = 0;
     scene.set('focused');
+    warmPendingNavigation();
     stage.dataset.mode = scene.mode;
     syncPhotoURL(nextIndex);
     if (!pendingNavigationSteps) primeCloseView();
@@ -1235,6 +1290,7 @@
   }
 
   function finishClose() {
+    swipe.reset(); warmSources.clear();
     activeIndex = -1; activeOrderPos = -1;
     activePlacement = null; activeCamera = null; activeOverlay = null; activeOverlayRect = null;
     closePreparation = null;
@@ -1346,8 +1402,28 @@
   $('#lbNext').addEventListener('click', function () { requestNavigation(1); });
   lightbox.addEventListener('wheel', beginLightboxWheelNavigation, { passive: false });
   lightbox.addEventListener('pointerdown', function (event) {
-    if (event.target === lightbox) closePhoto();
+    if (event.pointerType === 'mouse') {
+      if (event.target === lightbox) closePhoto();
+      return;
+    }
+    const eligible = !event.target.closest('button, a, #lbInfo')
+      && scene.mode !== 'wall' && scene.mode !== 'closing';
+    swipe.down(event.pointerId, event.clientX, event.clientY, event.timeStamp, vw, eligible);
+    swipeBackdrop = event.target === lightbox;
+    // Capture only an eligible gesture; native pan/pinch can still cancel it.
+    if (eligible) { try { lightbox.setPointerCapture(event.pointerId); } catch (_) {} }
   });
+  lightbox.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse') swipe.move(event.pointerId, event.clientX, event.clientY);
+  });
+  lightbox.addEventListener('pointerup', event => {
+    if (event.pointerType === 'mouse') return;
+    const result = swipe.up(event.pointerId, event.clientX, event.clientY, event.timeStamp);
+    if (result?.direction) requestNavigation(result.direction);
+    else if (result?.tap && swipeBackdrop) closePhoto();
+  });
+  lightbox.addEventListener('pointercancel', event => swipe.cancel(event.pointerId));
+  lightbox.addEventListener('lostpointercapture', event => swipe.cancel(event.pointerId));
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' && scene.mode !== 'wall') { event.preventDefault(); closePhoto(); return; }
     if (scene.mode !== 'wall') {
@@ -1408,7 +1484,13 @@
   window.addEventListener('orientationchange', handleResize);
 
   function tone(index) {
-    return 'hsl(' + ((index * 137.508) % 360 | 0) + ',42%,19%)';
+    // Seeded per photograph, so recycling a wall tile never changes its colour.
+    const mixed = Math.imul(index ^ seed, 0x45d9f3b);
+    const value = (mixed ^ (mixed >>> 16)) >>> 0;
+    const hue = value % 360;
+    const saturation = 46 + ((value >>> 9) % 17);
+    const lightness = 76 + ((value >>> 17) % 9);
+    return 'hsl(' + hue + ',' + saturation + '%,' + lightness + '%)';
   }
 
   setTimeout(function () { hint.classList.add('gone'); }, 7000);
@@ -1417,7 +1499,7 @@
   if (location.hash) openFromURL();
   window.addEventListener('pagehide', () => { rememberView(); stopInertia(); stopWheelInertia(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { rememberView(); stopInertia(); stopWheelInertia(); imageLoader.prune(new Set()); }
+    if (document.hidden) { rememberView(); stopInertia(); stopWheelInertia(); swipe.reset(); imageLoader.pause(); }
     else { imageLoader.resume(); if (scene.mode === 'wall') ensureVisibleForCameras([normalCamera()]); }
   });
 })();

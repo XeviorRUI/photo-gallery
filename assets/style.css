@@ -425,3 +425,4 @@ button {
   .lb-title { font-size: 19px; }
   .hint { display: none; }
 }
+.lightbox { touch-action: pan-y pinch-zoom; }

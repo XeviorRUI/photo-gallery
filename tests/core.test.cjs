@@ -4,6 +4,7 @@ const layout = require('../assets/layout.js');
 const images = require('../assets/image-loader.js');
 const catalog = require('../assets/catalog.js');
 const scenes = require('../assets/scene.js');
+const swipes = require('../assets/swipe.js');
 
 test('scene transitions cancel previous ownership and reject illegal jumps', () => {
   const scene = scenes.create();
@@ -117,4 +118,42 @@ test('background work pauses while hidden; foreground requests can still run', a
   const current = loader.load('current', 0); fake.started[0].onload(); await current;
   hidden = false; loader.resume(); fake.started[1].onload(); await warm;
   loader.dispose();
+});
+
+test('current image has reserved capacity and background promotion changes priority', async () => {
+  const fake = fakeImages();
+  const loader = images.create({ makeImage: fake.makeImage, hidden: () => false });
+  const work = ['a', 'b', 'c', 'd'].map(src => loader.load(src, 2));
+  assert.equal(fake.started.length, 3);
+  const foreground = loader.load('current', 0);
+  assert.equal(fake.started[3].src, 'current');
+  loader.load('a', 0);
+  assert.equal(fake.started[0].fetchPriority, 'high');
+  for (const image of [...fake.started]) image.onload();
+  await foreground; await tick();
+  fake.started[4].onload(); await Promise.all(work); loader.dispose();
+});
+
+test('pause preserves queued promises for mounted thumbnails on resume', async () => {
+  const fake = fakeImages();
+  const loader = images.create({ makeImage: fake.makeImage, concurrency: 1, hidden: () => false });
+  const a = loader.load('a'), b = loader.load('b');
+  loader.pause(); fake.started[0].onload(); await a;
+  assert.equal(fake.started.length, 1);
+  loader.resume(); fake.started[1].onload(); await b;
+  assert.equal(loader.stats().queued, 0); loader.dispose();
+});
+
+test('swipe direction, flick, jitter, vertical lock, pinch and cancellation', () => {
+  const swipe = swipes.create();
+  const start = () => swipe.down(1, 200, 200, 0, 390);
+  start(); assert.equal(swipe.up(1, 100, 210, 500).direction, 1);
+  start(); assert.equal(swipe.up(1, 300, 200, 500).direction, -1);
+  start(); assert.equal(swipe.up(1, 168, 200, 60).direction, 1);
+  start(); assert.equal(swipe.up(1, 195, 202, 100).tap, true);
+  start(); swipe.move(1, 204, 230); assert.equal(swipe.up(1, 80, 250, 300).direction, 0);
+  start(); swipe.down(2, 220, 200, 20, 390); assert.equal(swipe.up(1, 100, 200, 200), null);
+  assert.equal(swipe.up(2, 300, 200, 200), null);
+  start(); swipe.cancel(1); assert.equal(swipe.up(1, 100, 200, 200), null);
+  swipe.down(1, 200, 200, 0, 390, false); assert.equal(swipe.up(1, 100, 200, 200), null);
 });

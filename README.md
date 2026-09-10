@@ -13,6 +13,7 @@ assets/layout.js Pure periodic geometry and binary-search viewport queries
 assets/image-loader.js Prioritized loading, decoding and bounded LRU cache
 assets/catalog.js Catalogue validation and deterministic ordering
 assets/scene.js  Legal scene transitions and cancellation ownership
+assets/swipe.js  Direction-locked single-finger lightbox gestures
 catalog.json    Optional author-managed titles, stories, IDs, tags and ordering
 scan.ps1         Photo index generator
 build.ps1        Optimized deployment builder
@@ -41,6 +42,7 @@ See `DEPLOYMENT.md` for GitHub Pages and Nginx instructions.
 | Drag left or right | Browse the photo wall with inertia |
 | Scroll vertically | Browse the photo wall horizontally with acceleration |
 | Click a photograph | Open the animated lightbox and metadata |
+| Swipe left / right on an open photograph or backdrop | Next / previous photograph; vertical gestures and pinch remain native |
 | Arrow keys / Page Up / Page Down | Move between photographs |
 | Escape or click the backdrop | Close the lightbox |
 | Tab, then arrow keys and Enter | Explore and open photographs using the keyboard |
@@ -67,4 +69,4 @@ See `DEPLOYMENT.md` for GitHub Pages and Nginx instructions.
 
 Run `node --test tests/core.test.cjs` (Node 18+) and `./tests/build.tests.ps1` on Windows. Build tests create isolated, retained fixtures under `.work/` and exercise output protection, incremental reuse and failure recovery.
 
-After building, run `python tests/prepare-browser-fixtures.py`, serve the project and open `/tests/browser.html`. Browser fixtures reuse the 21 real image assets for 200/1000-entry geometry tests; they do not simulate 1000 distinct network downloads. The browser suite checks animation cancellation, slow/failing resources, keyboard controls, history and responsive layout.
+After building, run `python tests/prepare-browser-fixtures.py` (requires Pillow), then `python tests/serve.py` and open `http://127.0.0.1:8765/tests/browser.html?extended=1`. The server binds to localhost only. See [tests/VALIDATION.md](tests/VALIDATION.md) for fixture scope, throttling and device checks.

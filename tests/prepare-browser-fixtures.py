@@ -50,3 +50,32 @@ for field in ['thumbnails','details']:
 (output / 'long.js').write_text('window.GALLERY_CONFIG.showShare=true;window.GALLERY_CONFIG.showCollections=true;window.GALLERY_DATA = ' + json.dumps({'items':[long_item]}),encoding='utf-8')
 (output / 'long.html').write_text(template.replace('src="gallery.js', 'src="long.js'),encoding='utf-8')
 print('Created browser fixtures in', output)
+
+# Distinct image bytes and URLs, derived from real assets with a numbered overlay.
+# These exercise network/decode churn, not the artistic diversity of 1000 originals.
+from PIL import Image, ImageDraw
+media = output / 'media'
+media.mkdir(exist_ok=True)
+base_images = []
+for item in data['items']:
+    with Image.open(root / 'dist' / item['file']) as image:
+        image = image.convert('RGB')
+        image.thumbnail((960, 960))
+        base_images.append(image.copy())
+distinct = []
+for i in range(1000):
+    image = base_images[i % len(base_images)].copy()
+    ImageDraw.Draw(image).text((12, 12), f'Network fixture {i:04}', fill='white', stroke_width=2, stroke_fill='black')
+    detail = media / f'{i}-detail.jpg'
+    thumb = media / f'{i}-thumb.jpg'
+    if not detail.exists(): image.save(detail, quality=85)
+    width, height = image.size
+    image.thumbnail((320, 320))
+    if not thumb.exists(): image.save(thumb, quality=78)
+    distinct.append({'id': f'distinct-{i}', 'title': f'Photograph {i}', 'width': width, 'height': height,
+                     'file': f'/__media__/slow/{i}-detail.jpg', 'thumb': f'/__media__/slow/{i}-thumb.jpg'})
+script = 'window.GALLERY_DATA = ' + json.dumps({'items': distinct}) + ';\n'
+script += "const fixtureRun=new URLSearchParams(location.search).get('run');for(const item of window.GALLERY_DATA.items){for(const field of ['file','thumb'])item[field]+='?run='+encodeURIComponent(fixtureRun)}"
+(output / 'distinct.js').write_text(script, encoding='utf-8')
+(output / 'distinct.html').write_text(template.replace('src="gallery.js', 'src="distinct.js'), encoding='utf-8')
+print('Created 1000 distinct thumbnail/detail pairs')

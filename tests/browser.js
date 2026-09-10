@@ -27,6 +27,15 @@ function photo(doc) {
 }
 function key(doc, value, shiftKey = false) { doc.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: value, shiftKey, bubbles: true, cancelable: true })); }
 function mode(doc) { return doc.querySelector('#stage').dataset.mode; }
+function pointer(doc, target, type, x, y, id = 1) {
+  target.dispatchEvent(new doc.defaultView.PointerEvent(type, { pointerType: 'touch', pointerId: id,
+    isPrimary: id === 1, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+}
+function swipePhoto(doc, direction, target = doc.querySelector('.focus-photo')) {
+  pointer(doc, target, 'pointerdown', 200, 200);
+  pointer(doc, target, 'pointermove', 200 - direction * 100, 205);
+  pointer(doc, target, 'pointerup', 200 - direction * 100, 205);
+}
 const summary = [];
 async function test(label, run) {
   try { await run(); summary.push('PASS ' + label); }
@@ -149,10 +158,63 @@ document.querySelector('#run').onclick = async () => {
     await until(() => mode(doc) === 'wall', 'resize cancellation');
     assert(doc.querySelectorAll('.focus-photo,.is-focus-source').length === 0, 'Resize leaked scene');
   });
+  await test('mobile swipes, vertical scroll, pinch, controls and backdrop tap', async () => {
+    const frame = await load('21'); frame.style.width = '390px'; frame.style.height = '844px';
+    const doc = frame.contentDocument; await pause(180);
+    photo(doc).click(); await until(() => mode(doc) === 'focused', 'swipe open');
+    const original = frame.contentWindow.location.hash;
+    swipePhoto(doc, 1); await until(() => mode(doc) === 'switching', 'left swipe');
+    await until(() => mode(doc) === 'focused', 'left swipe finish');
+    assert(frame.contentWindow.location.hash !== original, 'Swipe did not advance');
+    swipePhoto(doc, -1); await until(() => mode(doc) === 'switching', 'right swipe');
+    await until(() => mode(doc) === 'focused', 'right swipe finish');
+    assert(frame.contentWindow.location.hash === original, 'Right swipe did not return');
+    const target = doc.querySelector('.focus-photo'), box = doc.querySelector('#lightbox');
+    pointer(doc, target, 'pointerdown', 200, 200);
+    pointer(doc, target, 'pointermove', 203, 250);
+    pointer(doc, target, 'pointerup', 100, 280);
+    pointer(doc, target, 'pointerdown', 200, 200);
+    pointer(doc, target, 'pointerdown', 220, 200, 2);
+    pointer(doc, target, 'pointerup', 100, 200);
+    pointer(doc, target, 'pointerup', 300, 200, 2);
+    pointer(doc, target, 'pointerdown', 200, 200);
+    pointer(doc, target, 'pointercancel', 200, 200);
+    pointer(doc, target, 'pointerup', 100, 200);
+    swipePhoto(doc, 1, doc.querySelector('#lbNext'));
+    await pause(350);
+    assert(mode(doc) === 'focused' && frame.contentWindow.location.hash === original, 'Rejected gesture navigated');
+    assert(frame.contentWindow.getComputedStyle(box).touchAction.includes('pinch-zoom'), 'Pinch disabled');
+    swipePhoto(doc, 1, box); await until(() => mode(doc) === 'switching', 'backdrop swipe');
+    await until(() => mode(doc) === 'focused', 'backdrop swipe finish');
+    pointer(doc, box, 'pointerdown', 5, 5); pointer(doc, box, 'pointerup', 6, 5);
+    await until(() => mode(doc) === 'wall', 'backdrop tap closes');
+  });
+  await test('pooled nodes preserve image ownership during rapid wall travel', async () => {
+    const frame = await load('distinct'); const doc = frame.contentDocument;
+    const initial = new Map([...doc.querySelectorAll('.brick')].map(el => [el, el.dataset.i]));
+    const stage = doc.querySelector('#stage'); let reused = false;
+    for (let i = 0; i < 20; i++) {
+      pointer(doc, stage, 'pointerdown', 1100, 350);
+      pointer(doc, stage, 'pointermove', 100, 350);
+      pointer(doc, stage, 'pointercancel', 100, 350);
+      await pause(40);
+      for (const brick of doc.querySelectorAll('.brick')) if (initial.has(brick) && brick.dataset.i !== initial.get(brick)) reused = true;
+      assert(doc.querySelectorAll('.brick').length < 180, 'Travel leaked mounted nodes');
+    }
+    await until(() => visibleBricks(doc).every(el => el.querySelector('img').naturalWidth), 'travel thumbnails', 20000);
+    for (const brick of visibleBricks(doc)) {
+      const expected = frame.contentWindow.GALLERY_DATA.items[+brick.dataset.i].thumb;
+      assert(new URL(brick.querySelector('img').src).pathname === new URL(expected, location.origin).pathname, 'Old request overwrote recycled image');
+    }
+    assert(reused, 'Node pool was not exercised');
+  });
   await test('camera animation frame sample', async () => {
     const frame = await load('21'); const doc = frame.contentDocument;
     await until(() => photo(doc)?.querySelector('img').naturalWidth, 'thumbnail');
     const intervals = []; let last = 0; let finished = false;
+    let semanticWrites = 0;
+    const mutations = new frame.contentWindow.MutationObserver(records => { semanticWrites += records.length; });
+    mutations.observe(doc.querySelector('#wall'), { subtree: true, attributes: true, attributeFilter: ['aria-hidden', 'tabindex'] });
     function sample(now) { if (last) intervals.push(now-last); last=now; if (!finished) frame.contentWindow.requestAnimationFrame(sample); }
     frame.contentWindow.requestAnimationFrame(sample);
     photo(doc).click(); await until(() => mode(doc) === 'focused', 'sample open');
@@ -160,9 +222,43 @@ document.querySelector('#run').onclick = async () => {
     await until(() => mode(doc) === 'focused', 'sample switched');
     key(doc,'Escape'); await until(() => mode(doc) === 'wall', 'sample close');
     finished = true;
+    mutations.disconnect();
+    assert(semanticWrites < 1000, 'Semantic attributes are being rewritten each frame: ' + semanticWrites);
     intervals.sort((a,b)=>a-b);
     summary.push('MEASURE local frame intervals: samples=' + intervals.length + ', p50=' + intervals[Math.floor(intervals.length*.5)].toFixed(1) + 'ms, p95=' + intervals[Math.floor(intervals.length*.95)].toFixed(1) + 'ms, >25ms=' + intervals.filter(v=>v>25).length);
+    summary.push('MEASURE semantic attribute writes during open/switch/close: ' + semanticWrites);
   });
+  if (new URLSearchParams(location.search).has('extended')) {
+    await test('distinct images under HTTP throttling and sustained navigation', async () => {
+      const frame = await load('distinct'); const doc = frame.contentDocument;
+      const run = new URL(frame.src).searchParams.get('run');
+      const stats = async () => (await fetch('/__stats__?run=' + run)).json();
+      photo(doc).click(); await until(() => mode(doc) === 'focused', 'cold weak-network open');
+      let peakNodes = 0, peakOverlays = 0;
+      const start = performance.now();
+      for (let i = 0; i < 60; i++) {
+        swipePhoto(doc, i % 10 < 7 ? 1 : -1);
+        await until(() => mode(doc) === 'switching', 'sustained switch');
+        await until(() => mode(doc) === 'focused', 'sustained settle');
+        peakNodes = Math.max(peakNodes, doc.querySelectorAll('.brick').length);
+        peakOverlays = Math.max(peakOverlays, doc.querySelectorAll('.focus-photo').length);
+        assert(peakNodes < 240 && peakOverlays === 1, 'Sustained navigation leaked nodes');
+        if (i % 10 === 0) results.textContent = summary.join('\n') + '\nRUNNING sustained navigation ' + (i + 1) + '/60';
+      }
+      const initial = frame.contentWindow.location.hash;
+      await until(() => doc.querySelector('.focus-photo img').src.includes('-detail.jpg'), 'detail upgrade');
+      key(doc, 'Escape'); await until(() => mode(doc) === 'wall', 'soak close');
+      await pause(1200);
+      const before = await stats();
+      frame.contentWindow.location.hash = initial;
+      await until(() => mode(doc) === 'focused', 'warm reopen'); await pause(1200);
+      const after = await stats();
+      assert(after.requests === before.requests, 'Warm reopen fetched retained assets again');
+      key(doc, 'Escape'); await until(() => mode(doc) === 'wall', 'final close');
+      assert(!doc.querySelector('.focus-photo,.is-focus-source'), 'Soak cleanup leaked nodes');
+      summary.push('MEASURE distinct/HTTP soak: ' + ((performance.now() - start) / 1000).toFixed(1) + 's, requests=' + after.requests + ', bytes=' + after.bytes + ', peak settled bricks=' + peakNodes + ', overlays=' + peakOverlays + ', warm requests=' + (after.requests - before.requests));
+    });
+  }
   results.textContent = summary.join('\n') + '\nDONE';
   document.querySelector('#run').disabled = false;
 };
