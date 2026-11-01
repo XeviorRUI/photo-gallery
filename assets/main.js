@@ -632,18 +632,34 @@
     return GalleryImages.source(items[index], Math.max(height, height * aspect) * (window.devicePixelRatio || 1), true);
   }
 
-  function loadForeground(src) {
+  function cancelledImageError() {
+    return Object.assign(new Error('Scene cancelled'), { name: 'AbortError' });
+  }
+
+  function loadForeground(src, signal) {
+    if (signal && signal.aborted) return Promise.reject(cancelledImageError());
     foregroundSources.set(src, (foregroundSources.get(src) || 0) + 1);
-    return imageLoader.load(src, 0).finally(() => {
+    let released = false;
+    // Releases the loader's last consumer as soon as the scene is cancelled, so
+    // the loader may drop the request instead of waiting for it to finish.
+    const release = () => {
+      if (released) return;
+      released = true;
       const remaining = foregroundSources.get(src) - 1;
       if (remaining) foregroundSources.set(src, remaining);
       else foregroundSources.delete(src);
+    };
+    const onAbort = () => release();
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    return imageLoader.load(src, 0).finally(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      release();
     });
   }
 
-  function preloadPhoto(index, priority = 0) {
+  function preloadPhoto(index, priority = 0, signal) {
     const src = detailSource(index);
-    return priority === 0 ? loadForeground(src) : imageLoader.load(src, priority);
+    return priority === 0 ? loadForeground(src, signal) : imageLoader.load(src, priority);
   }
 
   function sceneStart(mode) { swipe.reset(); return scene.begin(mode); }
@@ -654,19 +670,20 @@
     return new Promise((resolve, reject) => {
       const abort = () => reject(new Error('Scene cancelled'));
       signal.addEventListener('abort', abort, { once: true });
-      loadForeground(wallSourceForItem(items[index]))
+      loadForeground(wallSourceForItem(items[index]), signal)
         .catch(error => {
           if (signal.aborted || error.name === 'AbortError') throw error;
-          return preloadPhoto(index);
+          return preloadPhoto(index, 0, signal);
         }).then(resolve, reject)
         .finally(() => signal.removeEventListener('abort', abort));
     });
   }
 
   function upgradeOverlay(overlay, index) {
-    preloadPhoto(index).then(image => {
+    preloadPhoto(index, 0, scene.signal).then(image => {
       if (overlay.isConnected) overlay.querySelector('img').src = image.currentSrc || image.src;
-    }).catch(() => {
+    }).catch(error => {
+      if (error && error.name === 'AbortError') return;
       if (overlay.isConnected) $('#lbStatus').textContent = 'Full resolution unavailable; showing preview.';
     });
   }

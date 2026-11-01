@@ -3,10 +3,11 @@
   'use strict';
   const cancelled = () => Object.assign(new Error('Image no longer needed'), { name: 'AbortError' });
   function create({ concurrency = 4, maxEntries = 48, maxPixels = 36000000, timeout = 10000,
-    foregroundSlots = 1, makeImage = () => new Image(), hidden = () => document.hidden } = {}) {
+    foregroundSlots = 1, makeImage = () => new Image(), hidden = () => document.hidden,
+    staleGrace = 500, clock = () => (typeof performance === 'undefined' ? Date.now() : performance.now()) } = {}) {
     const jobs = new Map();
     const backgroundLimit = Math.max(1, concurrency - foregroundSlots);
-    let running = 0, serial = 0, paused = false;
+    let running = 0, serial = 0, paused = false, cancelledCount = 0;
     function trim() {
       let ready = [...jobs.values()].filter(j => j.image);
       let pixels = ready.reduce((sum, j) => sum + j.pixels, 0);
@@ -28,6 +29,7 @@
     function start(job) {
       running++;
       job.state = 'loading';
+      job.staleAt = 0;
       const image = makeImage();
       job.request = image;
       image.decoding = 'async';
@@ -76,10 +78,17 @@
       return job.promise;
     }
     function prune(keep) {
+      const now = clock();
       for (const [src, job] of jobs) {
-        if (job.state === 'queued' && !keep.has(src)) {
-          jobs.delete(src); job.reject(cancelled());
+        if (keep.has(src)) { job.staleAt = 0; continue; }
+        if (job.state === 'queued') {
+          jobs.delete(src); job.reject(cancelled()); continue;
         }
+        if (job.state !== 'loading') continue;
+        // A recycled wall copy often needs the same URL again, so an orphaned
+        // request is kept briefly instead of restarting it from zero bytes.
+        if (!job.staleAt) { job.staleAt = now; continue; }
+        if (now - job.staleAt >= staleGrace) { cancelledCount++; job.cancel(); }
       }
     }
     function dispose() {
@@ -91,7 +100,7 @@
       jobs.clear();
     }
     return { load, prune, pause: () => { paused = true; }, resume: () => { paused = false; pump(); }, dispose,
-      stats: () => ({ entries: jobs.size, running,
+      stats: () => ({ entries: jobs.size, running, cancelled: cancelledCount,
         queued: [...jobs.values()].filter(j => j.state === 'queued').length,
         pixels: [...jobs.values()].reduce((sum, j) => sum + (j.pixels || 0), 0) }) };
   }

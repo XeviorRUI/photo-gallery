@@ -110,6 +110,34 @@ test('loader drops obsolete queued work and recovers from timeout and error', as
   assert.equal(loader.stats().running, 0); loader.dispose();
 });
 
+test('prune cancels orphaned in-flight work after the grace period and frees its slot', async () => {
+  const fake = fakeImages();
+  let now = 1000;
+  const loader = images.create({ makeImage: fake.makeImage, concurrency: 3, staleGrace: 100,
+    clock: () => now, hidden: () => false });
+  const kept = loader.load('kept');
+  const orphan = loader.load('orphan');
+  const orphanRejection = assert.rejects(orphan, { name: 'AbortError' });
+  assert.equal(fake.started.length, 2, 'Both requests start under the concurrency limit');
+
+  now = 1050; loader.prune(new Set(['kept']));
+  assert.equal(loader.stats().running, 2, 'A just-orphaned request keeps its slot during the grace period');
+  now = 1100; loader.prune(new Set(['kept', 'orphan']));
+  now = 1200; loader.prune(new Set(['kept']));
+  assert.equal(loader.stats().running, 2, 'A returning consumer restarts the grace period');
+
+  const waiting = loader.load('waiting');
+  assert.equal(fake.started.length, 2, 'Queued work must wait for a free slot');
+  now = 1300; loader.prune(new Set(['kept', 'waiting']));
+  await orphanRejection;
+  assert.equal(loader.stats().cancelled, 1);
+  assert.equal(loader.stats().running, 2, 'Cancelling the orphan released its slot');
+  assert.equal(fake.started.length, 3);
+  assert.equal(fake.started[2].src, 'waiting');
+  fake.started[0].onload(); fake.started[2].onload();
+  await kept; await waiting; loader.dispose();
+});
+
 test('background work pauses while hidden; foreground requests can still run', async () => {
   const fake = fakeImages(); let hidden = true;
   const loader = images.create({ makeImage: fake.makeImage, hidden: () => hidden });
