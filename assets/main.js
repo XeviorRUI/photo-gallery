@@ -80,7 +80,7 @@
   const brickByElement = new WeakMap();
   const hiddenBricks = new Set();
   const imageLoader = GalleryImages.create();
-  const mounted = new Map();
+  let mounted = new Map();
   const brickPool = [];
   const wanted = new Map(), semantic = new Map(), keepSources = new Set();
   const foregroundSources = new Map(), warmSources = new Set();
@@ -277,13 +277,39 @@
     return -cycleW - GalleryLayout.mod(-value - cycleW, cycleW);
   }
 
+  // Move the logical wall by whole cycles while keeping every mounted node and
+  // its decoded image. Periodic content makes this visually identical to a
+  // rebuild, without the placeholder flash that a remount causes.
+  function shiftWallCycles(cycles) {
+    if (!cycles || !cycleW || !mounted.size) return;
+    const stride = cycles * cycleW;
+    const ordinalStep = cycles * items.length;
+    const rekeyed = new Map();
+    mounted.forEach(function (brick) {
+      brick.ordinal += ordinalStep;
+      brick.cycle = Math.floor(brick.ordinal / items.length);
+      brick.x += stride;
+      brick.key = brick.row + ':' + brick.ordinal;
+      brick.el.dataset.cycle = brick.cycle;
+      brick.el.style.left = brick.x + 'px';
+      rekeyed.set(brick.key, brick);
+    });
+    mounted = rekeyed;
+    if (activePlacement) activePlacement = { brick: activePlacement.brick, x: activePlacement.x + stride };
+  }
+
   function applyPan() {
     pan = normalizedPan(pan);
     wall.style.transform = cameraTransform(normalCamera());
   }
 
   function setPan(nextPan) {
-    pan = normalizedPan(nextPan);
+    const target = normalizedPan(nextPan);
+    if (cycleW) {
+      const cycles = Math.round((nextPan - target) / cycleW);
+      if (cycles) shiftWallCycles(cycles);
+    }
+    pan = target;
     applyPan();
     scheduleVisibilityCheck();
     clearTimeout(saveTimer);
@@ -763,25 +789,15 @@
   }
 
   function rebaseActiveToMiddleCycle() {
-    if (!activePlacement || !activeCamera) return;
-    const middle = findBrickCopy(
-      activePlacement.brick.row,
-      activePlacement.brick.orderPos,
-      MIDDLE_CYCLE
-    );
-    if (!middle || (middle === activePlacement.brick && middle.x === activePlacement.x)) return;
-
-    const previous = activePlacement;
-    const adjustedCamera = {
-      tx: activeCamera.tx + activeCamera.scale * (previous.x - middle.x),
+    if (!activePlacement || !activeCamera || !cycleW) return;
+    const cycles = MIDDLE_CYCLE - Math.floor(activePlacement.brick.ordinal / items.length);
+    if (!cycles) return;
+    shiftWallCycles(cycles);
+    activeCamera = {
+      tx: activeCamera.tx - activeCamera.scale * cycles * cycleW,
       ty: activeCamera.ty,
       scale: activeCamera.scale,
     };
-
-    showBrick(previous.brick);
-    hideBrick(middle);
-    activePlacement = { brick: middle, x: middle.x };
-    activeCamera = adjustedCamera;
     setWallState(activeCamera);
   }
 
@@ -802,7 +818,7 @@
     wall.style.transform = cameraTransform(camera);
   }
 
-  function animateWall(fromCamera, toCamera, milliseconds) {
+  function animateWall(fromCamera, toCamera, milliseconds, pinnedCameras) {
     setWallState(fromCamera);
     wall.style.willChange = 'transform';
     const animation = wall.animate([
@@ -811,9 +827,13 @@
     ], animationOptions(milliseconds));
     cameraFlight = { animation, fromCamera, toCamera };
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
+    // Pre-mounted regions stay mounted for the whole flight: recycling them at
+    // the start of a zoom-out forces a second mount later, and each rebuild
+    // paints the placeholder colour for a frame.
+    const pinned = pinnedCameras || [fromCamera, toCamera];
     const frame = () => {
       if (!cameraFlight || cameraFlight.animation !== animation) return;
-      ensureVisibleForCameras([currentCamera()]);
+      ensureVisibleForCameras([currentCamera()].concat(pinned));
       if (animation.playState === 'running' || animation.pending) cameraFrame = requestAnimationFrame(frame);
     };
     cameraFrame = requestAnimationFrame(frame);
@@ -1165,11 +1185,16 @@
     const previousOverlay = activeOverlay;
     const previousFloatRect = activeOverlayRect;
     const nextCamera = cameraForPlacement(nextPlacement);
+    // Keep both wall views warm across a switch. They are off-screen behind the
+    // photograph, so recycling them would only pay off as a later remount.
+    const wallBefore = wallCameraForPlacement(previousPlacement);
+    const wallAfter = wallCameraForPlacement(nextPlacement);
+    const pinned = [previousCamera, nextCamera, wallBefore, wallAfter];
     const previousLandingRect = rectForPlacement(previousPlacement, nextCamera);
     const nextStartingRect = rectForPlacement(nextPlacement, previousCamera);
     const nextFloatRect = floatingRect(nextPlacement, nextCamera);
 
-    await prepareWallForCameras([previousCamera, nextCamera]);
+    await prepareWallForCameras(pinned);
     if (token !== scene.token || scene.mode !== 'switching') return;
     const incomingOverlay = createOverlay(nextIndex, loadedImage, nextStartingRect);
     incomingOverlay.style.opacity = '0';
@@ -1180,7 +1205,7 @@
     updateLightboxMeta(items[nextIndex]);
 
     const animations = [
-      animateWall(previousCamera, nextCamera, motionMs),
+      animateWall(previousCamera, nextCamera, motionMs, pinned),
       ...animateOverlay(
         previousOverlay,
         previousFloatRect,
@@ -1294,7 +1319,15 @@
     setOverlayDepth(activeOverlay, 'clear');
     cancelAnimations(animations);
 
-    pan = finalPan;
+    // The wall transform is normalised into a bounded window; a cycle-nudged
+    // pan must move the mounted nodes with it or the next coordination pass
+    // would rebuild every visible brick.
+    const normalizedFinalPan = normalizedPan(finalPan);
+    if (cycleW) {
+      const cycles = Math.round((finalPan - normalizedFinalPan) / cycleW);
+      if (cycles) shiftWallCycles(cycles);
+    }
+    pan = normalizedFinalPan;
     showBrick(activePlacement.brick);
     activeOverlay.remove();
     activeOverlay = null;

@@ -61,4 +61,19 @@ Windows, headless Chrome 156 driven over the DevTools protocol, 1280 × 720 test
 | Incremental production build | 0 encoded, 105 reused image variants |
 | Matte colour case `#ffffff` vs `#FFFFFF` | Same asset URL and cache entries after normalisation |
 
-The headless compositor caps animation frames at roughly 30 Hz, so the frame-interval row is **not** comparable to the 2026-09-09 visible-window sample and is not evidence of app performance. The node counts, request and byte totals, warm-reopen and build-reuse results are the comparable figures; request and byte totals match the earlier run. This run did not exercise real iOS Safari or Android Chrome hardware.
+The headless compositor's rAF sampling changed between runs (p50 33.3 ms in one run, 6.1 ms in another), so the frame-interval row is **not** comparable to the 2026-09-09 visible-window sample and is not evidence of app performance. The node counts, request and byte totals, warm-reopen and build-reuse results are the comparable figures; request and byte totals match the earlier run. This run did not exercise real iOS Safari or Android Chrome hardware.
+
+## Recorded follow-up — 2026-11-01 (animation mounting)
+
+Repeated the open/close audit with a photograph at the right edge of the screen, which crosses the periodic-normalisation boundary. The pre-fix runtime (the committed `assets/main.js` before the mounting change) and the fixed runtime ran in the same headless Chrome 156 instance (ANGLE D3D11, AMD Radeon) against the 21-photo fixture.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Bricks added at focus settle | 79 | 0 |
+| Bricks removed at close start | 79 | 0 |
+| Bricks re-added during close | 79 | 0 |
+| Longest opening frames | 66.8 / 48.5 / 42.4 ms | 30.4 / 30.3 ms |
+| Semantic attribute writes, open + switch + close | 138 | 8 |
+| Visible-but-unpainted bricks (per-frame audit) | 0 | 0 |
+
+Zero churn means no tile repaints its placeholder colour (`averageColor`) during open or close. The remaining opening spikes are first-frame raster and decode work. The 15 browser checks and the 60-switch soak still pass with the same 189 requests / 6,343,603 bytes and a warm reopen of 0 requests; 26 consecutive right-arrow switches across the catalogue kept every focused photograph painted and inside the viewport with no page exceptions.
