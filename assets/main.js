@@ -820,7 +820,6 @@
 
   function animateWall(fromCamera, toCamera, milliseconds, pinnedCameras) {
     setWallState(fromCamera);
-    wall.style.willChange = 'transform';
     const animation = wall.animate([
       { transform: cameraTransform(fromCamera) },
       { transform: cameraTransform(toCamera) },
@@ -956,7 +955,6 @@
     animations.forEach(function (animation) { animation.cancel(); scene.animations.delete(animation); });
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = null; cameraFlight = null;
-    wall.style.willChange = '';
   }
 
   function createOverlay(itemIndex, loadedImage, rect) {

@@ -77,3 +77,21 @@ Repeated the open/close audit with a photograph at the right edge of the screen,
 | Visible-but-unpainted bricks (per-frame audit) | 0 | 0 |
 
 Zero churn means no tile repaints its placeholder colour (`averageColor`) during open or close. The remaining opening spikes are first-frame raster and decode work. A permanent `will-change: transform` on the wall was also tried across fresh browser launches (3 each): it made the first open slower (206 / 115 / 206 ms) than the shipped code (85 / 103 / 91 ms), so it was not adopted; the first open after a page load still pays a one-off raster cost of tens of milliseconds. The 15 browser checks and the 60-switch soak still pass with the same 189 requests / 6,343,603 bytes and a warm reopen of 0 requests; 26 consecutive right-arrow switches across the catalogue kept every focused photograph painted and inside the viewport with no page exceptions.
+
+## Boundary compositing audit — 2026-11-01
+
+The open and close boundaries were traced with the DevTools `LayerTree` domain:
+
+- The wall keeps one composited layer (stable id) across both boundaries; it is not re-created.
+- The lightbox inserts 10 UI layers when the opening starts and removes them when the closing finishes (total layers 14 → 24 → 14).
+- Frame pacing, screencast capture at device scale factors 1 and 2, and blank-frame detection found no uniformly white composited frame in headless Chrome.
+
+A real window can still present such a frame. To check whether the full-screen backdrop filter is the trigger, open the gallery in a real browser, paste the following in the DevTools console, and then open and close a photograph:
+
+```js
+const s = document.createElement('style');
+s.textContent = '#focusBackdrop{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}';
+document.head.append(s);
+```
+
+If the flash disappears, the backdrop filter's backdrop root is the trigger and the next step is to keep the lightbox compositing structure mounted across scenes. If it remains, capture a screen recording or a Performance trace; the remaining suspects are image decode/raster at the first flight and the display-level composition of the window.
