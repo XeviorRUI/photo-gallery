@@ -3,8 +3,19 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $fixture = Join-Path $projectRoot ('.work/build-tests-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path (Join-Path $fixture 'photos'),(Join-Path $fixture 'assets') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'build.ps1'),(Join-Path $projectRoot 'scan.ps1'),(Join-Path $projectRoot 'index.html'),(Join-Path $projectRoot 'config.js') -Destination $fixture
+Copy-Item -LiteralPath (Join-Path $projectRoot 'average-color.ps1') -Destination $fixture
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'assets') -File | Copy-Item -Destination (Join-Path $fixture 'assets')
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $projectRoot 'average-color.ps1')
+$pixels = [Drawing.Bitmap]::new(3,1)
+try {
+  $pixels.SetPixel(0,0,[Drawing.Color]::Red)
+  $pixels.SetPixel(1,0,[Drawing.Color]::Lime)
+  $pixels.SetPixel(2,0,[Drawing.Color]::Blue)
+  if ([GalleryPixelAverage]::Compute($pixels,[Drawing.Color]::White) -ne '#555555') {
+    throw 'RGB mean must include all three pixels, excluding row padding.'
+  }
+} finally { $pixels.Dispose() }
 $bitmap = [Drawing.Bitmap]::new(40,60)
 $graphics = [Drawing.Graphics]::FromImage($bitmap)
 $graphics.Clear([Drawing.Color]::Transparent)
@@ -41,24 +52,42 @@ Write-Host 'PASS unowned output is preserved'
 
 & (Join-Path $fixture 'build.ps1') -Root $fixture -Output 'public' -SiteUrl 'https://example.org/gallery/'
 $first = Read-Gallery (Join-Path $fixture 'public/gallery.js')
+Assert ($first.items[0].averageColor -eq '#FFD5D5') 'Average must include every pixel, composited on white.'
 Assert ((Get-FileHash -LiteralPath $sourceIndex).Hash -eq $sourceHash) 'Build rewrote source index.'
 Assert ($first.items[0].thumbnails.Count -eq 3) 'Missing thumbnail sizes.'
 Assert ($first.items[0].details.Count -eq 2) 'Missing detail sizes.'
 Assert (Test-Path -LiteralPath (Join-Path $fixture ('public/' + $first.items[0].thumb))) 'Custom output paths are broken.'
 $cacheFiles = @(Get-ChildItem -LiteralPath (Join-Path $fixture '.gallery-cache/images-v2') -File)
 $times = @{}; foreach ($f in $cacheFiles) { $times[$f.Name] = $f.LastWriteTimeUtc.Ticks }
+$metadataFiles = @(Get-ChildItem -LiteralPath (Join-Path $fixture '.gallery-cache/exif-average-v2') -File)
+$metadataTimes = @{}; foreach ($f in $metadataFiles) { $metadataTimes[$f.Name] = $f.LastWriteTimeUtc.Ticks }
 & (Join-Path $fixture 'build.ps1') -Root $fixture -Output 'public'
+foreach ($f in Get-ChildItem -LiteralPath (Join-Path $fixture '.gallery-cache/exif-average-v2') -File) {
+  Assert ($f.LastWriteTimeUtc.Ticks -eq $metadataTimes[$f.Name]) 'Unchanged average colour was recomputed.'
+}
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $fixture '.gallery-cache/images-v2') -File) {
   Assert ($f.LastWriteTimeUtc.Ticks -eq $times[$f.Name]) 'Unchanged image was encoded again.'
 }
 Write-Host 'PASS custom output, separate source index, responsive variants and incremental reuse'
 
+& (Join-Path $fixture 'build.ps1') -Root $fixture -Output 'public' -MatteColor '#ffffff'
+$lowered = Read-Gallery (Join-Path $fixture 'public/gallery.js')
+Assert ($lowered.items[0].thumb -eq $first.items[0].thumb) 'Matte colour case changed the asset URL.'
+Assert ($lowered.items[0].averageColor -eq $first.items[0].averageColor) 'Matte colour case changed the average colour.'
+Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture '.gallery-cache/images-v2') -File).Count -eq $times.Count) 'Matte colour case re-encoded identical variants.'
+Write-Host 'PASS matte colour case is normalised before hashing'
+
 & (Join-Path $fixture 'build.ps1') -Root $fixture -Output 'public' -MatteColor '#000000'
 $black = Read-Gallery (Join-Path $fixture 'public/gallery.js')
+Assert ($black.items[0].averageColor -eq '#2B0000') 'Average colour did not follow the black matte.'
 Assert ($first.items[0].thumb -ne $black.items[0].thumb) 'Matte change reused the same cache URL.'
 $image = [Drawing.Bitmap]::new((Join-Path $fixture ('public/' + $black.items[0].thumb)))
 try { Assert ($image.GetPixel(0,0).R -lt 20) 'Matte background did not change.' } finally { $image.Dispose() }
 Write-Host 'PASS matte parameter changes both URL and image pixels'
+& (Join-Path $fixture 'build.ps1') -Root $fixture -Output 'public' -MatteColor '#000000' -SkipScan
+$skip = Read-Gallery (Join-Path $fixture 'public/gallery.js')
+Assert ($skip.items[0].averageColor -eq '#2B0000') 'SkipScan kept an average for the wrong matte.'
+Write-Host 'PASS full-pixel average, cached reuse and SkipScan matte correction'
 
 # A JPEG containing a minimal EXIF orientation=6 record should become 60x40.
 $oriented = [Drawing.Bitmap]::new(40,60)

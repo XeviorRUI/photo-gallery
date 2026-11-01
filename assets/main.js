@@ -1484,13 +1484,8 @@
   window.addEventListener('orientationchange', handleResize);
 
   function tone(index) {
-    // Seeded per photograph, so recycling a wall tile never changes its colour.
-    const mixed = Math.imul(index ^ seed, 0x45d9f3b);
-    const value = (mixed ^ (mixed >>> 16)) >>> 0;
-    const hue = value % 360;
-    const saturation = 46 + ((value >>> 9) % 17);
-    const lightness = 76 + ((value >>> 17) % 9);
-    return 'hsl(' + hue + ',' + saturation + '%,' + lightness + '%)';
+    const color = items[index].averageColor;
+    return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? color : '#d9d9d9';
   }
 
   setTimeout(function () { hint.classList.add('gone'); }, 7000);

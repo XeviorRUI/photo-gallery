@@ -19,10 +19,12 @@
 param(
   [string]$Root = '',
   [string]$OutputPath = '',
-  [switch]$StrictImages
+  [switch]$StrictImages,
+  [ValidatePattern('^#[0-9A-Fa-f]{6}$')][string]$MatteColor = '#FFFFFF'
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'average-color.ps1')
 
 if ([string]::IsNullOrEmpty($Root)) { $Root = $PSScriptRoot }
 if ([string]::IsNullOrEmpty($Root)) { $Root = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -202,6 +204,7 @@ function Get-JpegDims([string]$path) {
 
 # ---------- 4. 单张照片信息 ----------
 function New-PhotoEntry([System.IO.FileInfo]$f) {
+  $averageColor = $null
   $rel = $f.FullName.Substring($photosDir.Length).TrimStart('\', '/').Replace('\', '/')
   $relFile = 'photos/' + $rel
 
@@ -214,7 +217,7 @@ function New-PhotoEntry([System.IO.FileInfo]$f) {
 
   if ($useDrawing) {
     try {
-      $img = [System.Drawing.Image]::FromFile($f.FullName)
+      $img = [System.Drawing.Image]::FromFile($f.FullName, $true)
       try {
         $w = $img.Width
         $h = $img.Height
@@ -255,6 +258,7 @@ function New-PhotoEntry([System.IO.FileInfo]$f) {
           if ($foc) { $focal = $foc + ' mm' }
         }
 
+        $averageColor = [GalleryPixelAverage]::Compute($img, [Drawing.ColorTranslator]::FromHtml($MatteColor))
         $ok = ($w -gt 0 -and $h -gt 0)
       } finally {
         $img.Dispose()
@@ -284,6 +288,8 @@ function New-PhotoEntry([System.IO.FileInfo]$f) {
     category = $cat
     width    = $w
     height   = $h
+    averageColor = $averageColor
+    averageColorMatte = $MatteColor.ToUpperInvariant()
     exif     = @{
       make     = $make
       model    = $model
@@ -308,7 +314,7 @@ $seenIds = @{}
 # ---------- 5. 按分类“轮流取”混排 ----------
 $entries = New-Object System.Collections.ArrayList
 $failed = 0
-$metadataCache = Join-Path $Root '.gallery-cache/exif-v1'
+$metadataCache = Join-Path $Root '.gallery-cache/exif-average-v2'
 if (Test-Path -LiteralPath $metadataCache) {
   $cursor = Get-Item -LiteralPath $metadataCache -Force
   while ($null -ne $cursor) {
@@ -319,7 +325,7 @@ if (Test-Path -LiteralPath $metadataCache) {
 New-Item -ItemType Directory -Path $metadataCache -Force | Out-Null
 foreach ($f in $files) {
   $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-  $cachedMetadata = Join-Path $metadataCache ($hash + '.json')
+  $cachedMetadata = Join-Path $metadataCache ($hash + '-' + $MatteColor.Substring(1).ToUpperInvariant() + '.json')
   $e = $null
   if (Test-Path -LiteralPath $cachedMetadata) {
     if ((Get-Item -LiteralPath $cachedMetadata -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Linked metadata cache file.' }

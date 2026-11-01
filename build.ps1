@@ -15,6 +15,9 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+# Asset URLs, average-colour metadata and the matte comparison use one spelling.
+$MatteColor = $MatteColor.ToUpperInvariant()
+
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = $PSScriptRoot }
 $sourceRoot = [System.IO.Path]::GetFullPath($Root)
 $sourcePrefix = $sourceRoot.TrimEnd([char[]]@(
@@ -97,10 +100,11 @@ $galleryPath = Join-Path $stageRoot 'gallery.js'
 if ($SkipScan) {
   Copy-Item -LiteralPath (Join-Path $sourceRoot 'gallery.js') -Destination $galleryPath
 } else {
-  & (Join-Path $sourceRoot 'scan.ps1') -Root $sourceRoot -OutputPath $galleryPath -StrictImages
+  & (Join-Path $sourceRoot 'scan.ps1') -Root $sourceRoot -OutputPath $galleryPath -StrictImages -MatteColor $MatteColor
 }
 
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $sourceRoot 'average-color.ps1')
 $jpegCodec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
   Where-Object { $_.MimeType -eq 'image/jpeg' } |
   Select-Object -First 1
@@ -258,6 +262,13 @@ foreach ($item in @($gallery.items)) {
   $sourceImage = $null
   $thumbs = @(); $details = @()
   try {
+    if (-not $item.PSObject.Properties['averageColor'] -or [string]$item.averageColor -notmatch '^#[0-9A-Fa-f]{6}$' -or
+        -not $item.PSObject.Properties['averageColorMatte'] -or $item.averageColorMatte -ne $MatteColor) {
+      $sourceImage = [System.Drawing.Image]::FromFile($sourcePath, $true)
+      Apply-ExifOrientation $sourceImage
+      $item | Add-Member -NotePropertyName averageColor -NotePropertyValue ([GalleryPixelAverage]::Compute($sourceImage, $matte)) -Force
+      $item | Add-Member -NotePropertyName averageColorMatte -NotePropertyValue $MatteColor.ToUpperInvariant() -Force
+    }
     foreach ($variant in $variants) {
       $identity = "$sourceHash|$($variant.side)|$($variant.quality)|$MatteColor|oriented-icc-matte-jpeg-v2|$encoderIdentity"
       $sha = [Security.Cryptography.SHA256]::Create()

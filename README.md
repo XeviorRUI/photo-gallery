@@ -63,6 +63,8 @@ See `DEPLOYMENT.md` for GitHub Pages and Nginx instructions.
 
 ## Notes
 
+Photo placeholders use the arithmetic mean of every full-resolution pixel's RGB channels, computed during scanning/building and stored as `averageColor`. Transparent pixels are composited over `MatteColor` (white by default) before averaging. Results are cached by image content and matte colour; the browser does not download or decode extra images to compute placeholders. Run `scan.ps1` to refresh source preview metadata, or `build.ps1` for deployment. Older catalogues without a valid average colour use a neutral grey fallback.
+
 `gallery.js` is generated from the contents of `photos/`. After adding, removing, or renaming photographs, run `scan.ps1` again before refreshing the page.
 
 ## Validation
