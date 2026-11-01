@@ -84,14 +84,23 @@ The open and close boundaries were traced with the DevTools `LayerTree` domain:
 
 - The wall keeps one composited layer (stable id) across both boundaries; it is not re-created.
 - The lightbox inserts 10 UI layers when the opening starts and removes them when the closing finishes (total layers 14 → 24 → 14).
-- Frame pacing, screencast capture at device scale factors 1 and 2, and blank-frame detection found no uniformly white composited frame in headless Chrome.
+- At the default texture budget, frame pacing, screencast capture at device scale factors 1 and 2, and blank-frame detection found no uniformly white composited frame in headless Chrome.
 
-A real window can still present such a frame. To check whether the full-screen backdrop filter is the trigger, open the gallery in a real browser, paste the following in the DevTools console, and then open and close a photograph:
+## GPU texture-budget audit — 2026-11-01
 
-```js
-const s = document.createElement('style');
-s.textContent = '#focusBackdrop{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}';
-document.head.append(s);
-```
+The compositor was constrained with `--force-gpu-mem-available-mb` and the gallery was opened and closed repeatedly while recording compositor frames (one JPEG per presented frame). A frame counts as blank when its downscaled luminance is nearly uniform and bright (standard deviation < 12, mean > 200) while both neighbours are textured (standard deviation > 25).
 
-If the flash disappears, the backdrop filter's backdrop root is the trigger and the next step is to keep the lightbox compositing structure mounted across scenes. If it remains, capture a screen recording or a Performance trace; the remaining suspects are image decode/raster at the first flight and the display-level composition of the window.
+| Condition | Cycles | Blank frames |
+| --- | --- | --- |
+| Default texture budget, previous code | 30 | 0 |
+| 128 MB, previous code | 30 | 17 |
+| 128 MB, wall kept on its own composited layer | 30 | 0 |
+| 64 MB, previous code | 15 | 13 |
+| 64 MB, wall kept on its own composited layer | 15 | 3 |
+| Default texture budget, composited wall | 15 | 0 |
+
+The white frames are the page background showing through: the zoom makes the compositor allocate a high-resolution tiling for the wall at the start of the flight, and under texture pressure the frame is presented before that raster is ready. Keeping the wall on one long-lived composited layer (`.wall { will-change: transform }`) lets the compositor reuse the existing texture and scale it; the wall sits behind a blurred, veiled backdrop, so the softer zoom is not visible.
+
+Candidates ruled out at 64 MB (15 cycles each, blank frames): removing the backdrop blur 14, hiding the backdrop 12, removing the overlay filter 12, removing brick shadows 15, blocking detail images 11 — all close to the 13-frame baseline.
+
+These budgets are synthetic pressure applied with a command-line flag, not a measurement of any device's GPU memory. Default-budget runs never produced a blank frame. A real device can still present a blank frame for a reason outside these tests; a screen recording or a Performance trace from that device is the next useful artifact.

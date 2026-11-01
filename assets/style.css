@@ -141,6 +141,11 @@ button {
   top: 0;
   left: 0;
   transform-origin: 0 0;
+  /* Keep the wall on one composited layer. Without this hint the compositor
+     allocates a fresh high-resolution tiling when the camera zoom starts and
+     again when it settles; on GPUs with a small texture budget that misses
+     the frame and shows the white page background. */
+  will-change: transform;
 }
 .brick {
   position: absolute;
