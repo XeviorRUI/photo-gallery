@@ -3,7 +3,7 @@
 Run from the repository root on Windows:
 
 ```powershell
-node --test tests/core.test.cjs
+node --test tests/core.test.cjs   # or: node tests/core.test.cjs if the host blocks child-process pipes
 ./tests/build.tests.ps1
 ./build.ps1
 python tests/prepare-browser-fixtures.py
@@ -20,7 +20,7 @@ The fixture generator requires Pillow. Open `http://127.0.0.1:8765/tests/browser
 - Rapid wall travel checks the mounted-node bound, reuse of the same elements for different photos, and image ownership after delayed responses.
 - The extended test performs 60 animated directional switches, checks settled node/overlay bounds, closes and reopens the same photograph, and verifies warm reopen adds no HTTP image requests. The duration and traffic are printed, not inferred from catalogue size.
 - Gesture tests dispatch touch Pointer Events: left/right, vertical lock, pinch rejection, cancellation, excluded controls, backdrop swipe and backdrop tap. Pure tests cover short flicks and jitter. These do not emulate an operating system's native gesture recognizer.
-- Unit tests cover foreground capacity under a full background queue, priority promotion, queue retention while paused, resume, deduplication, eviction, failure and timeout. Build tests cover input protection, cache invalidation, orientation, escaping and rollback.
+- Unit tests cover foreground capacity under a full background queue, priority promotion, queue retention while paused, resume, deduplication, eviction, failure, timeout, and cancellation of orphaned in-flight work after the grace period. Build tests cover input protection, cache invalidation, orientation, escaping and rollback.
 
 ## Device acceptance still requires hardware
 
@@ -44,3 +44,21 @@ Windows, Codex in-app Chromium, 1280 × 720 test viewport (mobile layout at 390 
 | Final incremental production build | 0 encoded, 105 reused image variants |
 
 These are one-machine observations, not a before/after speedup claim or a mobile performance guarantee. The 60 switches visit a subset of the 1000-resource catalogue.
+
+## Recorded local run — 2026-11-01
+
+Windows, headless Chrome 156 driven over the DevTools protocol, 1280 × 720 test viewport (mobile layout at 390 × 844), local `tests/serve.py`. The 12 core tests, the build regression suite, the 15 browser checks and the extended sustained-navigation soak passed.
+
+| Measurement | Observed |
+| --- | --- |
+| Mounted bricks, 21 / 200 / 1000 geometry entries | 91 / 89 / 95 |
+| Original visible wall coordinates | Within 0.1 CSS px baseline tolerance |
+| Semantic attribute writes over open / switch / close | 138, below the 1000-write budget |
+| HTTP-throttled 60-switch run | 59.5 s; 189 requests; 6,343,603 served bytes |
+| Peak settled nodes in sustained run | 102 bricks, 1 overlay |
+| Warm reopen | 0 additional image HTTP requests |
+| Local frame intervals (headless) | 97 samples; p50 33.3 ms; p95 33.4 ms; 53 over 25 ms |
+| Incremental production build | 0 encoded, 105 reused image variants |
+| Matte colour case `#ffffff` vs `#FFFFFF` | Same asset URL and cache entries after normalisation |
+
+The headless compositor caps animation frames at roughly 30 Hz, so the frame-interval row is **not** comparable to the 2026-09-09 visible-window sample and is not evidence of app performance. The node counts, request and byte totals, warm-reopen and build-reuse results are the comparable figures; request and byte totals match the earlier run. This run did not exercise real iOS Safari or Android Chrome hardware.

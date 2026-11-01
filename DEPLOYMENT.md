@@ -47,7 +47,9 @@ To change the output settings:
 ```
 
 `MatteColor` is used only when a source image contains transparency. Use
-`#FFFFFF` for the light theme or `#000000` for the dark theme.
+`#FFFFFF` for the light theme or `#000000` for the dark theme. The colour is
+normalised to upper case before hashing, so `#ffffff` and `#FFFFFF` share cache
+entries, asset URLs and the stored placeholder average.
 
 ## GitHub Pages
 

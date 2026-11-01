@@ -14,9 +14,11 @@ assets/image-loader.js Prioritized loading, decoding and bounded LRU cache
 assets/catalog.js Catalogue validation and deterministic ordering
 assets/scene.js  Legal scene transitions and cancellation ownership
 assets/swipe.js  Direction-locked single-finger lightbox gestures
+assets/photo.css Minimal styling for generated static photo pages
 catalog.json    Optional author-managed titles, stories, IDs, tags and ordering
 scan.ps1         Photo index generator
 build.ps1        Optimized deployment builder
+average-color.ps1 Full-resolution RGB average shared by scanning and building
 gallery.js       Generated photo index; do not edit by hand
 photos/          Photograph assets and category folders
 dist/            Generated deployment output; do not edit by hand
@@ -65,10 +67,12 @@ See `DEPLOYMENT.md` for GitHub Pages and Nginx instructions.
 
 Photo placeholders use the arithmetic mean of every full-resolution pixel's RGB channels, computed during scanning/building and stored as `averageColor`. Transparent pixels are composited over `MatteColor` (white by default) before averaging. Results are cached by image content and matte colour; the browser does not download or decode extra images to compute placeholders. Run `scan.ps1` to refresh source preview metadata, or `build.ps1` for deployment. Older catalogues without a valid average colour use a neutral grey fallback.
 
+Requests that no longer have a consumer — a cancelled scene, or tiles recycled after leaving the viewport — are cancelled after a 500 ms grace period so a returning copy can reuse the transfer. The loader stops waiting for the download, clears the pending image and frees the slot for visible photographs; the browser may still finish an already-started transfer on its own.
+
 `gallery.js` is generated from the contents of `photos/`. After adding, removing, or renaming photographs, run `scan.ps1` again before refreshing the page.
 
 ## Validation
 
-Run `node --test tests/core.test.cjs` (Node 18+) and `./tests/build.tests.ps1` on Windows. Build tests create isolated, retained fixtures under `.work/` and exercise output protection, incremental reuse and failure recovery.
+Run `node --test tests/core.test.cjs` (Node 18+) and `./tests/build.tests.ps1` on Windows. Where the host blocks the test runner's child-process pipes, `node tests/core.test.cjs` runs the same suite in-process. Build tests create isolated, retained fixtures under `.work/` and exercise output protection, incremental reuse and failure recovery.
 
 After building, run `python tests/prepare-browser-fixtures.py` (requires Pillow), then `python tests/serve.py` and open `http://127.0.0.1:8765/tests/browser.html?extended=1`. The server binds to localhost only. See [tests/VALIDATION.md](tests/VALIDATION.md) for fixture scope, throttling and device checks.
