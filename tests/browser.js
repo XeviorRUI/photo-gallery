@@ -75,6 +75,21 @@ document.querySelector('#run').onclick = async () => {
       ['left','top','width','height'].forEach((field,i) => assert(Math.abs(a[i+3] - br[field]) < 0.1, field + ' changed'));
     }
   });
+  await test('dealt rows keep one viewport duplicate-free', async () => {
+    const report = [];
+    for (const count of [200, 1000]) {
+      const frame = await load(String(count)); const doc = frame.contentDocument;
+      await until(() => visibleBricks(doc).length > 0, 'wall ' + count);
+      await pause(120);
+      const visible = visibleBricks(doc);
+      const unique = new Set(visible.map(el => el.dataset.i));
+      report.push(count + ':' + visible.length + '/' + unique.size);
+      assert(unique.size === visible.length,
+        'Duplicate catalogue entries in one viewport: ' + visible.length + ' slots, ' + unique.size + ' unique');
+      frame.remove();
+    }
+    summary.push('MEASURE dealt viewport slots/unique = ' + report.join(', '));
+  });
   await test('open, focus trap, switch, close and cleanup', async () => {
     const frame = await load('21'); const doc = frame.contentDocument;
     await until(() => photo(doc)?.querySelector('img').naturalWidth, 'first thumbnail');

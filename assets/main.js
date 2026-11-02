@@ -106,6 +106,7 @@
   let padTop = 0;
   let rowCount = 0;
   let rowH = 0;
+  let rowStride = 1;
   let cycleW = 0;
   let pan = 0;
   let laidOut = false;
@@ -185,6 +186,32 @@
     return vw > 0 && vh > 0;
   }
 
+  // Deal the catalogue across both axes. Column `c` of row `r` holds
+  // displayOrder[(r + c * stride) % count], so the photos visible in one
+  // viewport are consecutive along the shuffled catalogue instead of the same
+  // sequence shifted per row. The stride is the smallest one that keeps every
+  // row a full permutation (coprime with the count) and, when the catalogue is
+  // large enough, keeps the row windows from overlapping in that viewport.
+  function chooseRowStride(widths) {
+    const count = widths.length;
+    if (count < 2) return 1;
+    const totalRows = rowCount + 2;
+    const average = widths.reduce((sum, width) => sum + width, 0) / count;
+    const visibleColumns = Math.max(1, Math.ceil(vw / Math.max(1, average + GAP)) + 3);
+    const limit = visibleColumns > 1
+      ? Math.floor((count - totalRows) / (visibleColumns - 1))
+      : count;
+    for (let stride = totalRows; stride <= limit; stride++) {
+      if (GalleryLayout.gcd(stride, count) === 1) return stride;
+    }
+    // The catalogue is too small for a duplicate-free viewport; still spread
+    // the rows instead of stacking shifted copies of one sequence.
+    for (let stride = totalRows; stride <= totalRows + count; stride++) {
+      if (GalleryLayout.gcd(stride, count) === 1) return stride;
+    }
+    return 1;
+  }
+
   function layout() {
     if (scene.mode !== 'wall' || !updateViewport()) return;
 
@@ -212,25 +239,28 @@
     const widths = displayOrder.map(function (itemIndex) {
       return Math.max(40, itemAspect(items[itemIndex]) * rowH);
     });
-    const offsetStep = Math.max(1, Math.floor(items.length / Math.max(1, rowCount)));
+    rowStride = chooseRowStride(widths);
     const rowDefinitions = [{
       row: -1,
       y: padTop - GAP - rowH,
-      offset: (items.length - offsetStep) % items.length,
+      offset: -1,
+      stride: rowStride,
       decorative: true,
     }];
     for (let row = 0; row < rowCount; row++) {
       rowDefinitions.push({
         row: row,
         y: padTop + row * (rowH + GAP),
-        offset: (row * offsetStep) % items.length,
+        offset: row,
+        stride: rowStride,
         decorative: false,
       });
     }
     rowDefinitions.push({
       row: rowCount,
       y: padTop + rowCount * (rowH + GAP),
-      offset: (rowCount * offsetStep) % items.length,
+      offset: rowCount,
+      stride: rowStride,
       decorative: true,
     });
 
@@ -1123,10 +1153,11 @@
     warmSources.clear();
     if (activeOrderPos < 0 || document.hidden || navigator.connection?.saveData) return;
     const predictedSteps = activeSwitchSteps + pendingNavigationSteps;
-    const orderPos = wrappedOrderPos(activeOrderPos + predictedSteps);
+    const orderPos = wrappedOrderPos(activeOrderPos + predictedSteps * rowStride);
     // Warm the requested destination, then one neighbour in the last travel direction.
-    const positions = pendingNavigationSteps ? [orderPos, wrappedOrderPos(orderPos + navigationDirection)]
-      : [wrappedOrderPos(orderPos + navigationDirection)];
+    const positions = pendingNavigationSteps
+      ? [orderPos, wrappedOrderPos(orderPos + navigationDirection * rowStride)]
+      : [wrappedOrderPos(orderPos + navigationDirection * rowStride)];
     positions.forEach(position => warmSources.add(detailSource(displayOrder[position])));
     pruneImages();
     warmSources.forEach(src => imageLoader.load(src, 2).catch(function () {}));
@@ -1159,7 +1190,7 @@
     const nextPlacement = placementAfterSteps(activePlacement, steps);
     if (!nextPlacement) return;
 
-    const nextOrderPos = wrappedOrderPos(activeOrderPos + steps);
+    const nextOrderPos = wrappedOrderPos(activeOrderPos + steps * rowStride);
     const nextIndex = displayOrder[nextOrderPos];
     const motionMs = directSwitchDuration(steps);
     const token = sceneStart('switching');

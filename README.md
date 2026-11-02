@@ -60,6 +60,7 @@ See `DEPLOYMENT.md` for GitHub Pages and Nginx instructions.
 - Set `order` to `curated` to use numerical `order` values. The default shuffled order and wall position are remembered within the browser tab session.
 - Link to a collection with `?collection=Landscape`, or to a photo with `#photo=ID`. Photo IDs default to a content hash (survives renaming); assign a custom ID to preserve a link after editing the photo, or distinguish identical copies.
 - `?seed=42` selects a repeatable shuffle, useful for visual comparisons.
+- Rows no longer repeat one shuffled sequence. Column `c` of row `r` shows `displayOrder[(r + c * stride) % count]` (`chooseRowStride` in `assets/main.js`), so a viewport deals consecutive photographs across rows and columns. When the catalogue is larger than one viewport, every visible slot is a different photograph; a small catalogue repeats by necessity. The stride follows the viewport width and is re-dealt on resize.
 - Adjust wall density in the constants at the top of `assets/main.js`.
 - Adjust colors, spacing, and the lightbox animation in `assets/style.css`.
 

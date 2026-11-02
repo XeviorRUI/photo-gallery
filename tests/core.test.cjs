@@ -64,6 +64,37 @@ test('multi-step navigation is exact across many cycle boundaries', () => {
   assert.equal(b.x - a.x, m.cycleWidth * 10000);
 });
 
+test('stride dealing spreads one viewport across the catalogue without repeats', () => {
+  const count = 200;
+  const widths = Array.from({ length: count }, (_, i) => 60 + (i % 7) * 18);
+  const rows = [];
+  for (let row = -1; row <= 4; row++) {
+    rows.push({ row, offset: row, stride: 7, y: row * 140, decorative: row < 0 || row === 4 });
+  }
+  const model = layout.create(widths, rows, 120, 12, 18);
+  assert.equal(model.cycleWidth, widths.reduce((sum, w) => sum + w + 12, 0));
+  for (const row of rows) {
+    const seen = new Set();
+    for (let i = 0; i < count; i++) seen.add(model.at(row.row, i).orderPos);
+    assert.equal(seen.size, count, 'a row must still contain the whole catalogue');
+  }
+  const window = [];
+  for (let column = 0; column < 14; column++) {
+    for (const row of rows) window.push(model.at(row.row, column).orderPos);
+  }
+  assert.equal(new Set(window).size, window.length, 'one viewport must not repeat a photograph');
+  for (const row of rows) {
+    for (const orderPos of [0, 1, 17, 199]) {
+      const brick = model.copy(row.row, orderPos, 2);
+      assert.equal(brick.orderPos, orderPos);
+      assert.equal(model.at(row.row, brick.ordinal).orderPos, orderPos);
+    }
+  }
+  // A stride that is not coprime would repeat the row; the geometry falls back.
+  const fallback = layout.create(widths, [{ row: 0, offset: 0, stride: 6, y: 0 }], 120, 12, 18);
+  assert.equal(fallback.at(0, 1).orderPos, 1);
+});
+
 test('stable ordering, curated ordering, unavailable storage and size selection', () => {
   const items = catalog.normalize({ items: [{ file: 'a', width: 20, height: 40, order: 2 }, { file: 'b', order: 1 }] });
   assert.deepEqual(catalog.shuffledIndices(items, 42), catalog.shuffledIndices(items, 42));

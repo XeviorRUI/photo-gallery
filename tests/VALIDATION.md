@@ -14,7 +14,8 @@ The fixture generator requires Pillow. Open `http://127.0.0.1:8765/tests/browser
 
 ## What the tests exercise
 
-- The 0/1/21/200/1000 geometry fixtures repeat the existing assets to isolate layout scale. The original wall coordinates are checked against a saved baseline.
+- The 0/1/21/200/1000 geometry fixtures repeat the existing assets to isolate layout scale. The original wall coordinates are checked against a saved baseline, which is regenerated whenever the dealing changes.
+- The dealt-viewport check loads the 200 and 1000 photo fixtures and asserts that every brick intersecting the viewport carries a different catalogue entry. Geometry unit tests cover the same property directly: each row still contains the whole catalogue, a window of columns across all rows has no repeats, and `copy()` inverts the stride.
 - The distinct fixture contains 1000 different thumbnail/detail pairs with different URLs and bytes. It derives them from the existing photos with numbered overlays, up to 320/960 pixels. It exercises changing network and decode resources, not the visual diversity or resolution of 1000 full-size originals.
 - `/__media__/slow/` adds 150 ms before each response and limits each response to 256 KiB/s. This is **per response**, not an aggregate link limit. Ordinary app scripts and styles are unthrottled. Each test uses a fresh media query string for cold loads; cache headers allow warm loads. `/__stats__?run=...` reports requests and bytes actually served for that test.
 - Rapid wall travel checks the mounted-node bound, reuse of the same elements for different photos, and image ownership after delayed responses.
