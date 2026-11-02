@@ -21,13 +21,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      # The image pipeline uses System.Drawing (GDI+) and ImageCodecInfo. Those
+      # types live in the .NET Framework assemblies that Windows PowerShell 5.1
+      # provides; PowerShell 7 only has a facade that forwards to a separate
+      # System.Drawing.Common package. Use the supported host here.
       - name: Build deployment directory
-        shell: pwsh
-        run: ./build.ps1
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./build.ps1
 
       - name: Validate geometry, loading and build protection
-        shell: pwsh
+        shell: powershell
         run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           node --test tests/core.test.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/build.tests.ps1

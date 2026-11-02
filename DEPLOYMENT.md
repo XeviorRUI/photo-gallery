@@ -57,6 +57,12 @@ The workflow at `.github/workflows/deploy-pages.yml` builds and publishes
 `dist/` whenever the `main` branch is updated. In the repository settings, open
 **Pages** and set **Source** to **GitHub Actions**.
 
+The build steps run under Windows PowerShell 5.1 rather than PowerShell 7. The
+image pipeline uses `System.Drawing` (GDI+) and `ImageCodecInfo`, which come from
+the .NET Framework assemblies that 5.1 provides; PowerShell 7 only carries a
+facade that forwards those types to a separate `System.Drawing.Common` package.
+Running the same commands under 5.1 matches the local development host.
+
 If the source repository is public, the original files in `photos/` are also
 publicly visible in the repository even though they are not part of the Pages
 artifact. To keep originals private, use an eligible private repository or run
