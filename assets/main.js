@@ -40,7 +40,6 @@
   const SHADOW_FLOAT = lightTheme
     ? '0 17px 28px -15px rgba(25, 30, 28, 0.46)'
     : '0 18px 30px -15px rgba(0, 0, 0, 0.88)';
-  const PHOTO_CLEAR_FILTER = 'blur(0px) brightness(1) contrast(1) saturate(1)';
   const PHOTO_BACKGROUND_FILTER = lightTheme
     ? 'blur(3px) brightness(1.2) contrast(0.82) saturate(0.72)'
     : 'blur(3px) brightness(0.54) contrast(1) saturate(0.82)';
@@ -888,9 +887,12 @@
   }
 
   function depthStyle(depth) {
-    if (depth === 'float') return { shadowOpacity: 1, filter: PHOTO_CLEAR_FILTER };
+    // `none` renders identically to `blur(0px) brightness(1) contrast(1)
+    // saturate(1)` but does not create a filtered layer for the floating
+    // photograph, which is one less surface to raster at the flight boundaries.
+    if (depth === 'float') return { shadowOpacity: 1, filter: 'none' };
     if (depth === 'background') return { shadowOpacity: 0, filter: PHOTO_BACKGROUND_FILTER };
-    return { shadowOpacity: 0, filter: PHOTO_CLEAR_FILTER };
+    return { shadowOpacity: 0, filter: 'none' };
   }
 
   function setOverlayRect(overlay, rect) {
