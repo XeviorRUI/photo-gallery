@@ -104,3 +104,14 @@ The white frames are the page background showing through: the zoom makes the com
 Candidates ruled out at 64 MB (15 cycles each, blank frames): removing the backdrop blur 14, hiding the backdrop 12, removing the overlay filter 12, removing brick shadows 15, blocking detail images 11 — all close to the 13-frame baseline.
 
 These budgets are synthetic pressure applied with a command-line flag, not a measurement of any device's GPU memory. Default-budget runs never produced a blank frame. A real device can still present a blank frame for a reason outside these tests; a screen recording or a Performance trace from that device is the next useful artifact.
+
+## Close-end boundary audit — 2026-11-02
+
+The cycle recorder now timestamps the click and the Escape key as well, so blank frames can be attributed to the opening, the focused dwell, the closing animation or the settled wall.
+
+- All remaining blank frames fall **0.83–0.86 s after the close started** (the close animation is 0.82 s); the opening phase produced none.
+- The overlay removal, lightbox hide and follow-up teardown now run one frame after the wall's final transform is published. The landing brick sits exactly under the overlay at that moment, so the frame is pixel-identical. At 64 MB this reduced blank frames from 13 to 6 over 40 cycles.
+- Deferring the teardown two frames gave 8, and also deferring `cancelAnimation` gave 7, so there was no further gain; the one-frame version was kept for the smallest interaction delay.
+- 96 MB: 1–3 blank frames per 30 cycles. 128 MB and the default budget: 0 per 30–40 cycles.
+
+Ruled out at 64 MB (blank frames per 15–40 cycles, repeated baselines 9–13): removing the small glass blurs on buttons and chips (5), hiding the info panel (8), keeping the lightbox subtree mounted instead of toggling `hidden` (6), removing the main backdrop blur (14), hiding the backdrop (12), removing the overlay filter (12), removing brick shadows (15), blocking detail images (11). The differences sit inside the spread of repeated baselines, so none of them is established as the trigger. The residual therefore looks like the compositor's final-frame raster/commit when the whole window's texture budget is below roughly 96 MB, not a page-structure defect.

@@ -1326,15 +1326,29 @@
       if (cycles) shiftWallCycles(cycles);
     }
     pan = normalizedFinalPan;
-    showBrick(activePlacement.brick);
-    activeOverlay.remove();
-    activeOverlay = null;
-    focusLayer.textContent = '';
-    lightbox.hidden = true;
-    lightbox.classList.remove('is-active', 'is-ready');
-    clearHiddenBricks();
-
-    finishClose();
+    // Publish the settled wall first; the landing brick sits under the overlay
+    // at exactly this rect, so tearing the overlay and lightbox surfaces down
+    // one frame later is pixel-identical and keeps the final raster clean.
+    applyPan();
+    const closingOverlay = activeOverlay;
+    await new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        if (token !== scene.token || scene.mode !== 'closing') {
+          closingOverlay.remove();
+          resolve();
+          return;
+        }
+        showBrick(activePlacement.brick);
+        closingOverlay.remove();
+        activeOverlay = null;
+        focusLayer.textContent = '';
+        lightbox.hidden = true;
+        lightbox.classList.remove('is-active', 'is-ready');
+        clearHiddenBricks();
+        finishClose();
+        resolve();
+      });
+    });
   }
 
   function finishClose() {
