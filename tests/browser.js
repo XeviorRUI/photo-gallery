@@ -261,7 +261,10 @@ document.querySelector('#run').onclick = async () => {
         if (i % 10 === 0) results.textContent = summary.join('\n') + '\nRUNNING sustained navigation ' + (i + 1) + '/60';
       }
       const initial = frame.contentWindow.location.hash;
-      await until(() => doc.querySelector('.focus-photo img').src.includes('-detail.jpg'), 'detail upgrade');
+      await until(() => {
+        const src = doc.querySelector('.focus-photo img').src;
+        return src.includes('-detail.jpg') || src.startsWith('blob:');
+      }, 'detail upgrade');
       key(doc, 'Escape'); await until(() => mode(doc) === 'wall', 'soak close');
       await pause(1200);
       const before = await stats();

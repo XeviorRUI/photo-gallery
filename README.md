@@ -70,7 +70,9 @@ Photo placeholders use the arithmetic mean of every full-resolution pixel's RGB 
 
 Requests that no longer have a consumer — a cancelled scene, or tiles recycled after leaving the viewport — are cancelled after a 500 ms grace period so a returning copy can reuse the transfer. The loader stops waiting for the download, clears the pending image and frees the slot for visible photographs; the browser may still finish an already-started transfer on its own.
 
-Closing a photograph releases its full-resolution decode (`imageLoader.release`). Reopening reads the file from the HTTP cache and decodes it again, so a long browsing session does not hold one decoded detail image for every photograph visited.
+Closing a photograph releases its full-resolution decode. The detail image is fetched as a blob and shown through a revocable object URL; `disposeOverlay` revokes that URL when the overlay leaves the page, so the decoded bitmap does not stay in the browser's URL-keyed image cache for the rest of the session. Reopening reads the file from the HTTP cache and decodes it again. Pages loaded from `file://` (where `fetch` is unavailable) fall back to the image loader. Adjacent photographs are no longer decoded ahead of time; a switch starts from the already-decoded wall preview and upgrades when the detail arrives.
+
+The last frames of the close animation show a viewport-sized bitmap of the settled wall (`captureCloseCover`). It is drawn from the same brick geometry and thumbnails as the live wall, so the frame is identical apart from the soft brick shadows; it covers the moment when the compositor commits the settled 1x raster and can otherwise present the page background for a frame. It is invalidated on resize, pan, layout, or the next open.
 
 `gallery.js` is generated from the contents of `photos/`. After adding, removing, or renaming photographs, run `scan.ps1` again before refreshing the page.
 

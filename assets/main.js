@@ -214,6 +214,7 @@
   function layout() {
     if (scene.mode !== 'wall' || !updateViewport()) return;
 
+    invalidateCloseCover();
     emptyState.hidden = true;
     clearHiddenBricks();
     const anchor = laidOut ? captureAnchor() : savedView.anchor;
@@ -333,6 +334,7 @@
   }
 
   function setPan(nextPan) {
+    invalidateCloseCover();
     const target = normalizedPan(nextPan);
     if (cycleW) {
       const cycles = Math.round((nextPan - target) / cycleW);
@@ -735,12 +737,61 @@
   }
 
   function upgradeOverlay(overlay, index) {
-    preloadPhoto(index, 0, scene.signal).then(image => {
-      if (overlay.isConnected) overlay.querySelector('img').src = image.currentSrc || image.src;
-    }).catch(error => {
+    const src = detailSource(index);
+    loadDetailImage(src, scene.signal).then(function (detail) {
+      if (!overlay.isConnected) { URL.revokeObjectURL(detail.url); return; }
+      releaseOverlayDetail(overlay);
+      overlay.detailUrl = detail.url;
+      const image = overlay.querySelector('img');
+      if (image) image.src = detail.url;
+    }).catch(function (error) {
       if (error && error.name === 'AbortError') return;
-      if (overlay.isConnected) $('#lbStatus').textContent = 'Full resolution unavailable; showing preview.';
+      // file:// pages and servers that refuse the fetch keep working through
+      // the loader; that path holds a decoded image, but only as a fallback.
+      preloadPhoto(index, 0, scene.signal).then(function (image) {
+        if (!overlay.isConnected) return;
+        const target = overlay.querySelector('img');
+        if (target) target.src = image.currentSrc || image.src;
+      }).catch(function (fallback) {
+        if (fallback && fallback.name === 'AbortError') return;
+        if (overlay.isConnected) $('#lbStatus').textContent = 'Full resolution unavailable; showing preview.';
+      });
     });
+  }
+
+  // The detail bitmap of a photograph is transient: it is fetched as a blob,
+  // used by the floating overlay, and released with the overlay instead of
+  // staying in the browser's URL-keyed image cache for the rest of the session.
+  function loadDetailImage(src, signal) {
+    if (signal && signal.aborted) return Promise.reject(cancelledImageError());
+    return fetch(src, { credentials: 'same-origin', signal: signal, priority: 'high' }).then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.blob();
+    }).then(function (blob) {
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.decoding = 'async';
+      return new Promise(function (resolve, reject) {
+        image.onload = function () { resolve({ image: image, url: url }); };
+        image.onerror = function () {
+          URL.revokeObjectURL(url);
+          reject(new Error('Image decode failed'));
+        };
+        image.src = url;
+      });
+    });
+  }
+
+  function releaseOverlayDetail(overlay) {
+    if (!overlay || !overlay.detailUrl) return;
+    URL.revokeObjectURL(overlay.detailUrl);
+    overlay.detailUrl = null;
+  }
+
+  function disposeOverlay(overlay) {
+    if (!overlay) return;
+    releaseOverlayDetail(overlay);
+    overlay.remove();
   }
 
   /* ---------- Camera geometry ---------- */
@@ -1039,6 +1090,110 @@
     ]).catch(function () {});
   }
 
+  /* ---------- Closing raster cover ---------- */
+
+  // The close animation ends with the live wall back at 1x. When the compositor
+  // has to raster that final frame under texture-memory pressure, it can present
+  // the page background for one frame. This bitmap is drawn from the settled
+  // wall view, so it can be shown just before the animation ends and removed
+  // once the live wall has been committed; the visible frame stays identical.
+  let closeCover = null;
+  let closeCoverTimer = 0;
+  let closeCoverShown = false;
+
+  function drawWallView(context, width, height, viewPan) {
+    const styles = getComputedStyle(document.documentElement);
+    const background = styles.getPropertyValue('--bg').trim() || '#0e100f';
+    const accents = [
+      { color: styles.getPropertyValue('--page-accent-one').trim(), x: 0.72, y: 0.18, radius: 30 },
+      { color: styles.getPropertyValue('--page-accent-two').trim(), x: 0.08, y: 0.84, radius: 28 },
+    ];
+    const rem = parseFloat(styles.fontSize) || 16;
+    context.fillStyle = background;
+    context.fillRect(0, 0, width, height);
+    accents.forEach(function (accent) {
+      if (!accent.color) return;
+      const gradient = context.createRadialGradient(
+        width * accent.x, height * accent.y, 0,
+        width * accent.x, height * accent.y, accent.radius * rem);
+      gradient.addColorStop(0, accent.color);
+      gradient.addColorStop(1, 'transparent');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, width, height);
+    });
+    mounted.forEach(function (brick) {
+      const x = brick.x + viewPan;
+      if (x >= width || x + brick.w <= 0 || brick.y >= height || brick.y + brick.h <= 0) return;
+      context.fillStyle = tone(brick.itemIdx);
+      context.fillRect(x, brick.y, brick.w, brick.h);
+      const image = brick.img;
+      if (!image || !image.complete || !image.naturalWidth || !image.classList.contains('in')) return;
+      const naturalWidth = image.naturalWidth;
+      const naturalHeight = image.naturalHeight;
+      const scale = Math.max(brick.w / naturalWidth, brick.h / naturalHeight);
+      const sourceWidth = brick.w / scale;
+      const sourceHeight = brick.h / scale;
+      context.drawImage(image,
+        (naturalWidth - sourceWidth) / 2, (naturalHeight - sourceHeight) / 2,
+        sourceWidth, sourceHeight, x, brick.y, brick.w, brick.h);
+    });
+  }
+
+  function captureCloseCover() {
+    if (scene.mode !== 'focused' || !activePlacement || !vw || !vh) return;
+    const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(vw * ratio));
+    canvas.height = Math.max(1, Math.round(vh * ratio));
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.scale(ratio, ratio);
+    // The close animation settles on the wall view centred on the photograph's
+    // home anchor, not on the pan that was current before the camera flew in.
+    const camera = wallCameraForPlacement(activePlacement);
+    drawWallView(context, vw, vh, camera.tx);
+    closeCover = { canvas: canvas, vw: vw, vh: vh, pan: camera.tx };
+  }
+
+  function scheduleCloseCoverCapture(token) {
+    // Two frames after the settle, when the camera flight is already static:
+    // drawing the bitmap here is cheap and a dropped frame is not visible.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        if (token !== scene.token || scene.mode !== 'focused') return;
+        captureCloseCover();
+      });
+    });
+  }
+
+  function scheduleCloseCover() {
+    if (!closeCover || !activePlacement || closeCover.vw !== vw || closeCover.vh !== vh) return;
+    if (closeCover.pan !== wallCameraForPlacement(activePlacement).tx) return;
+    clearTimeout(closeCoverTimer);
+    const lead = Math.min(32, Math.round(CAMERA_MOTION_MS * 0.04));
+    closeCoverTimer = setTimeout(showCloseCover, Math.max(0, CAMERA_MOTION_MS - lead));
+  }
+
+  function showCloseCover() {
+    closeCoverTimer = 0;
+    if (!closeCover || closeCoverShown || scene.mode !== 'closing') return;
+    closeCover.canvas.className = 'close-cover';
+    stage.appendChild(closeCover.canvas);
+    closeCoverShown = true;
+  }
+
+  function hideCloseCover() {
+    clearTimeout(closeCoverTimer);
+    closeCoverTimer = 0;
+    if (closeCover && closeCover.canvas.parentNode) closeCover.canvas.parentNode.removeChild(closeCover.canvas);
+    closeCoverShown = false;
+  }
+
+  function invalidateCloseCover() {
+    hideCloseCover();
+    closeCover = null;
+  }
+
   /* ---------- Open, switch, close ---------- */
   async function openPhoto(itemIndex, sourceElement) {
     if (scene.mode !== 'wall' || itemIndex < 0 || itemIndex >= items.length) return;
@@ -1048,6 +1203,7 @@
     stopInertia();
     stopWheelInertia();
     closePreparation = null;
+    invalidateCloseCover();
     clearNavigationInput();
     const token = sceneStart('opening');
     returnFocus = sourceElement;
@@ -1117,6 +1273,7 @@
     ensureVisibleForCameras([activeCamera, wallCameraForPlacement(activePlacement)]);
     lightbox.classList.add('is-ready');
     scene.set('focused');
+    scheduleCloseCoverCapture(token);
     warmPendingNavigation();
     stage.dataset.mode = scene.mode;
     syncPhotoURL(itemIndex);
@@ -1152,17 +1309,11 @@
   }
 
   function warmPendingNavigation() {
+    // Detail images are transient blobs now (fetched when an overlay needs
+    // one), so warming them through the image loader would decode another
+    // full-size texture and keep it in the loader cache for no benefit.
     warmSources.clear();
-    if (activeOrderPos < 0 || document.hidden || navigator.connection?.saveData) return;
-    const predictedSteps = activeSwitchSteps + pendingNavigationSteps;
-    const orderPos = wrappedOrderPos(activeOrderPos + predictedSteps * rowStride);
-    // Warm the requested destination, then one neighbour in the last travel direction.
-    const positions = pendingNavigationSteps
-      ? [orderPos, wrappedOrderPos(orderPos + navigationDirection * rowStride)]
-      : [wrappedOrderPos(orderPos + navigationDirection * rowStride)];
-    positions.forEach(position => warmSources.add(detailSource(displayOrder[position])));
     pruneImages();
-    warmSources.forEach(src => imageLoader.load(src, 2).catch(function () {}));
   }
 
   function flushNavigationInput() {
@@ -1266,7 +1417,7 @@
     previousOverlay.style.opacity = '0';
     hideBrick(nextPlacement.brick);
     cancelAnimations(animations);
-    previousOverlay.remove();
+    disposeOverlay(previousOverlay);
     incomingOverlay.classList.remove('incoming');
 
     activeIndex = nextIndex;
@@ -1279,6 +1430,7 @@
     ensureVisibleForCameras([activeCamera, wallCameraForPlacement(activePlacement)]);
     activeSwitchSteps = 0;
     scene.set('focused');
+    scheduleCloseCoverCapture(token);
     warmPendingNavigation();
     stage.dataset.mode = scene.mode;
     syncPhotoURL(nextIndex);
@@ -1302,13 +1454,14 @@
     clearNavigationInput();
     cancelAnimations([...scene.animations]);
     if (!activePlacement || !activeOverlay) {
+      invalidateCloseCover();
       finishClose(); return;
     }
     if (interrupted) {
       activeCamera = displayedCamera;
       activeOverlayRect = { left: displayedRect.left, top: displayedRect.top,
         width: displayedRect.width, height: displayedRect.height };
-      focusLayer.querySelectorAll('.focus-photo').forEach(el => { if (el !== activeOverlay) el.remove(); });
+      focusLayer.querySelectorAll('.focus-photo').forEach(el => { if (el !== activeOverlay) disposeOverlay(el); });
       activeOverlay.classList.remove('outgoing', 'incoming');
       activeOverlay.style.opacity = '1';
       setOverlayRect(activeOverlay, activeOverlayRect);
@@ -1327,6 +1480,7 @@
     closePreparation = null;
     await preparedCloseView;
     if (token !== scene.token || scene.mode !== 'closing') return;
+    scheduleCloseCover();
 
     const backdropAnimation = animateBackdrop(true, false, CLOSE_BACKDROP_MS);
     const animations = [
@@ -1373,18 +1527,30 @@
         if (closingImage) closingImage.removeAttribute('src');
         if (releasedDetail) imageLoader.release(releasedDetail);
         if (token !== scene.token || scene.mode !== 'closing') {
-          closingOverlay.remove();
+          disposeOverlay(closingOverlay);
           resolve();
           return;
         }
         showBrick(activePlacement.brick);
-        closingOverlay.remove();
+        disposeOverlay(closingOverlay);
         activeOverlay = null;
-        focusLayer.textContent = '';
+        [...focusLayer.querySelectorAll('.focus-photo')].forEach(disposeOverlay);
         lightbox.hidden = true;
         lightbox.classList.remove('is-active', 'is-ready');
         clearHiddenBricks();
         finishClose();
+        // Keep the cover for a short wall-clock settle window: the live wall is
+        // already identical underneath, so holding it is invisible, while the
+        // compositor gets several frames to commit the 1x raster.
+        setTimeout(function () {
+          requestAnimationFrame(function () {
+            invalidateCloseCover();
+            if (layoutDeferred) {
+              layoutDeferred = false;
+              if (scene.mode === 'wall') layout();
+            }
+          });
+        }, 150);
         resolve();
       });
     });
@@ -1395,7 +1561,7 @@
     activeIndex = -1; activeOrderPos = -1;
     activePlacement = null; activeCamera = null; activeOverlay = null; activeOverlayRect = null;
     closePreparation = null;
-    focusLayer.textContent = '';
+    [...focusLayer.querySelectorAll('.focus-photo')].forEach(disposeOverlay);
     clearHiddenBricks();
     clearNavigationInput();
     lightbox.hidden = true; lightbox.classList.remove('is-active', 'is-ready');
@@ -1403,8 +1569,9 @@
     stage.inert = false;
     scene.set('wall'); stage.dataset.mode = scene.mode;
     setBackdrop(false); applyPan();
-    if (layoutDeferred) { layoutDeferred = false; layout(); }
-    else ensureVisibleForCameras([normalCamera()]);
+    if (layoutDeferred) {
+      if (!closeCoverShown) { layoutDeferred = false; layout(); }
+    } else ensureVisibleForCameras([normalCamera()]);
     if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
     else stage.focus({ preventScroll: true });
     returnFocus = null;
@@ -1566,11 +1733,13 @@
         return;
       }
       if (scene.mode !== 'focused' || !activePlacement) {
+        invalidateCloseCover();
         layoutDeferred = true;
         if (scene.mode !== 'closing') closePhoto();
         return;
       }
       updateViewport();
+      invalidateCloseCover();
       activeCamera = cameraForPlacement(activePlacement);
       activeOverlayRect = floatingRect(activePlacement, activeCamera);
       setWallState(activeCamera);
@@ -1579,6 +1748,7 @@
       layoutDeferred = true;
       closePreparation = null;
       if (activeOverlay) upgradeOverlay(activeOverlay, activeIndex);
+      scheduleCloseCoverCapture(scene.token);
     }, 120);
   }
   window.addEventListener('resize', handleResize);
