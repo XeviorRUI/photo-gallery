@@ -70,6 +70,8 @@ Photo placeholders use the arithmetic mean of every full-resolution pixel's RGB 
 
 Requests that no longer have a consumer — a cancelled scene, or tiles recycled after leaving the viewport — are cancelled after a 500 ms grace period so a returning copy can reuse the transfer. The loader stops waiting for the download, clears the pending image and frees the slot for visible photographs; the browser may still finish an already-started transfer on its own.
 
+Closing a photograph releases its full-resolution decode (`imageLoader.release`). Reopening reads the file from the HTTP cache and decodes it again, so a long browsing session does not hold one decoded detail image for every photograph visited.
+
 `gallery.js` is generated from the contents of `photos/`. After adding, removing, or renaming photographs, run `scan.ps1` again before refreshing the page.
 
 ## Validation

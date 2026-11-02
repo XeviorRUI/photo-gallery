@@ -1362,8 +1362,14 @@
     // one frame later is pixel-identical and keeps the final raster clean.
     applyPan();
     const closingOverlay = activeOverlay;
+    // Drop the full-resolution decode for this photograph; reopening it costs a
+    // decode from the HTTP cache instead of keeping a texture for every visit.
+    const releasedDetail = activeIndex >= 0 ? detailSource(activeIndex) : null;
     await new Promise(function (resolve) {
       requestAnimationFrame(function () {
+        const closingImage = closingOverlay.querySelector('img');
+        if (closingImage) closingImage.removeAttribute('src');
+        if (releasedDetail) imageLoader.release(releasedDetail);
         if (token !== scene.token || scene.mode !== 'closing') {
           closingOverlay.remove();
           resolve();

@@ -116,3 +116,9 @@ The cycle recorder now timestamps the click and the Escape key as well, so blank
 - 96 MB: 1–3 blank frames per 30 cycles. 128 MB and the default budget: 0 per 30–40 cycles.
 
 Ruled out at 64 MB (blank frames per 15–40 cycles, repeated baselines 9–13): removing the small glass blurs on buttons and chips (5), hiding the info panel (8), keeping the lightbox subtree mounted instead of toggling `hidden` (6), removing the main backdrop blur (14), hiding the backdrop (12), removing the overlay filter (12), removing brick shadows (15), blocking detail images (11). The differences sit inside the spread of repeated baselines, so none of them is established as the trigger. The residual therefore looks like the compositor's final-frame raster/commit when the whole window's texture budget is below roughly 96 MB, not a page-structure defect.
+
+## Detail release and focused snapshot — 2026-11-02
+
+Closing a photograph now clears the floating image's `src` and calls the new `imageLoader.release(src)`, which removes that detail image from the loader cache (a pending request is cancelled; a decoded one is dropped). The next open reads the file from the HTTP cache and decodes it again. The extended soak still reports 0 extra server requests for a warm reopen and the same 302 requests / 8,046,733 bytes.
+
+A focused-state snapshot was implemented and measured, then removed. The wall behind an open photograph would be drawn into a viewport-sized canvas so the live wall could leave the compositor. At 64 MB, 40 cycles produced 10 blank frames against 6–13 for runs without it, and at 128 MB both were 0. The reason is visible in the earlier data: with `will-change: transform` the wall texture is already viewport-sized, so replacing it with an equally sized bitmap frees nothing, while the open-end frame pays an extra canvas draw. The experiment is recorded here instead of the code.

@@ -91,6 +91,19 @@
         if (now - job.staleAt >= staleGrace) { cancelledCount++; job.cancel(); }
       }
     }
+    function release(src) {
+      const job = jobs.get(src);
+      if (!job) return false;
+      if (job.state === 'loading' && job.cancel) {
+        jobs.delete(src);
+        job.cancel();
+        return true;
+      }
+      if (job.state === 'queued') job.reject(cancelled());
+      jobs.delete(src);
+      job.state = 'released';
+      return true;
+    }
     function dispose() {
       for (const job of jobs.values()) {
         if (job.state === 'queued') job.reject(new Error('Loader disposed'));
@@ -99,7 +112,7 @@
       for (const job of jobs.values()) if (job.cancel) job.cancel();
       jobs.clear();
     }
-    return { load, prune, pause: () => { paused = true; }, resume: () => { paused = false; pump(); }, dispose,
+    return { load, prune, release, pause: () => { paused = true; }, resume: () => { paused = false; pump(); }, dispose,
       stats: () => ({ entries: jobs.size, running, cancelled: cancelledCount,
         queued: [...jobs.values()].filter(j => j.state === 'queued').length,
         pixels: [...jobs.values()].reduce((sum, j) => sum + (j.pixels || 0), 0) }) };

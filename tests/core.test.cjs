@@ -169,6 +169,29 @@ test('prune cancels orphaned in-flight work after the grace period and frees its
   await kept; await waiting; loader.dispose();
 });
 
+test('release drops a cached or pending image so it is loaded again', async () => {
+  const fake = fakeImages();
+  const loader = images.create({ makeImage: fake.makeImage, concurrency: 1, hidden: () => false });
+  const first = loader.load('kept');
+  fake.started[0].onload();
+  await first;
+  assert.equal(loader.stats().entries, 1);
+  assert.equal(loader.release('kept'), true);
+  assert.equal(loader.stats().entries, 0);
+  const second = loader.load('kept');
+  assert.equal(fake.started.length, 2, 'a released image must be requested again');
+  fake.started[1].onload();
+  await second;
+  assert.equal(loader.stats().entries, 1);
+  const pending = loader.load('pending');
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(loader.release('pending'), true);
+  await rejected;
+  assert.equal(loader.stats().running, 0);
+  assert.equal(loader.release('missing'), false);
+  loader.dispose();
+});
+
 test('background work pauses while hidden; foreground requests can still run', async () => {
   const fake = fakeImages(); let hidden = true;
   const loader = images.create({ makeImage: fake.makeImage, hidden: () => hidden });
