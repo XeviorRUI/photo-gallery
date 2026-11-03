@@ -136,6 +136,26 @@ button {
   overflow: hidden;
   touch-action: none;
 }
+/* Experimental (?behind=1): in-flow content lives in the layout viewport,
+   which extends behind Safari's bottom toolbar (fixed content is clamped to
+   the visual viewport). That is what lets the wall's bottom peek pass under
+   the toolbar; the lightbox stays in the current (dynamic) viewport. */
+@supports (height: 100lvh) {
+  html.behind-chrome,
+  html.behind-chrome body {
+    height: 100lvh;
+    overflow: hidden;
+  }
+  .stage.behind-chrome {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    height: 100lvh;
+  }
+}
 /* Pixel-identical bitmap of the settled wall. It is shown for the last frames
    of the close animation while the compositor commits the 1x raster, so a
    missed final raster shows this bitmap instead of the white page background. */
@@ -257,6 +277,12 @@ button {
   color: var(--ink);
   background: transparent;
   pointer-events: none;
+}
+@supports (height: 100dvh) {
+  .lightbox.behind-chrome {
+    bottom: auto;
+    height: 100dvh;
+  }
 }
 .lightbox.is-active { pointer-events: auto; }
 .focus-backdrop {
