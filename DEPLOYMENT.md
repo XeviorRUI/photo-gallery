@@ -51,22 +51,34 @@ To change the output settings:
 normalised to upper case before hashing, so `#ffffff` and `#FFFFFF` share cache
 entries, asset URLs and the stored placeholder average.
 
-## GitHub Pages
+## GitHub Pages (photographs stay local)
 
-The workflow at `.github/workflows/deploy-pages.yml` builds and publishes
-`dist/` whenever the `main` branch is updated. In the repository settings, open
-**Pages** and set **Source** to **GitHub Actions**.
+The public repository holds the code only. `photos/` and the generated
+`gallery.js` are ignored by git, so original files and their metadata are never
+committed or uploaded. The published site contains only the resized and
+re-encoded copies that the gallery serves to visitors.
 
-The build steps run under Windows PowerShell 5.1 rather than PowerShell 7. The
-image pipeline uses `System.Drawing` (GDI+) and `ImageCodecInfo`, which come from
-the .NET Framework assemblies that 5.1 provides; PowerShell 7 only carries a
-facade that forwards those types to a separate `System.Drawing.Common` package.
-Running the same commands under 5.1 matches the local development host.
+1. Put the photographs in `photos/` (subfolders become categories). Remove or
+   replace the demo files first if they are still present.
+2. Run `./deploy.ps1`. It scans and builds locally, then force-pushes the
+   generated `dist/` to the `gh-pages` branch of the `origin` remote.
+3. On the first deployment, open the repository settings, **Pages**, set
+   **Source** to **Deploy from a branch**, branch `gh-pages`, folder **/ (root)**.
+4. Later deployments are just `./deploy.ps1`.
 
-If the source repository is public, the original files in `photos/` are also
-publicly visible in the repository even though they are not part of the Pages
-artifact. To keep originals private, use an eligible private repository or run
-the build locally and publish only `dist/` from a separate Pages repository.
+`.github/workflows/tests.yml` still runs the core and build tests on pushes.
+It does not build or deploy the gallery, because the runner has no photographs.
+
+The public page shows the gallery itself; the original files are never in the
+repository. GitHub Pages cannot password-protect a site. If the gallery must
+not be public, build locally and upload `dist/` to Cloudflare Pages with
+Cloudflare Access, or to Netlify/Vercel with their password protection.
+
+If you would rather keep a push-to-deploy flow, a paid GitHub plan can publish
+Pages from a private repository (the site is still public), or a private
+repository can push `dist/` to the `gh-pages` branch of this public repository
+with a token. Both still publish the optimized derivatives that visitors
+download.
 
 ## Nginx
 

@@ -3,3 +3,9 @@ dist/
 .gallery-cache/
 .gallery-build-*/
 .gallery-backup-*/
+
+# Photographs and their generated index stay local. Only the optimized build
+# output (dist/) is published, through the gh-pages branch created by deploy.ps1.
+photos/*
+!photos/README.md
+gallery.js

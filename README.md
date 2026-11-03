@@ -18,15 +18,16 @@ assets/photo.css Minimal styling for generated static photo pages
 catalog.json    Optional author-managed titles, stories, IDs, tags and ordering
 scan.ps1         Photo index generator
 build.ps1        Optimized deployment builder
+deploy.ps1       Build locally and publish dist/ to the gh-pages branch
 average-color.ps1 Full-resolution RGB average shared by scanning and building
-gallery.js       Generated photo index; do not edit by hand
-photos/          Photograph assets and category folders
+gallery.js       Generated local photo index; ignored by git
+photos/          Local-only photographs and category folders; ignored by git
 dist/            Generated deployment output; do not edit by hand
 ```
 
 ## Usage
 
-1. Add JPG, JPEG, PNG, GIF, BMP or TIFF files to `photos/`. The Windows image pipeline uses the first GIF frame / TIFF page. Convert WebP and AVIF first; unsupported or damaged images fail production builds instead of silently disappearing.
+1. Add JPG, JPEG, PNG, GIF, BMP or TIFF files to `photos/`. The folder is local only: git ignores it, so original files and their metadata are never committed. The Windows image pipeline uses the first GIF frame / TIFF page. Convert WebP and AVIF first; unsupported or damaged images fail production builds instead of silently disappearing.
 2. Optionally place files in subfolders; each subfolder becomes a category label.
 3. Run `scan.ps1` from PowerShell to rebuild `gallery.js` and read image dimensions and EXIF metadata.
 4. Open `index.html` in a browser, or serve the folder locally with `python -m http.server 8765 --bind 127.0.0.1`. Source preview uses originals. For optimized preview, run `./build.ps1` and visit `/dist/`.
@@ -35,7 +36,11 @@ dist/            Generated deployment output; do not edit by hand
 
 Run `./build.ps1` to create an isolated `dist/` directory containing optimized
 thumbnail and detail images plus only the files required by the public site.
-See `DEPLOYMENT.md` for GitHub Pages and Nginx instructions.
+
+To publish, run `./deploy.ps1`. It builds from the local `photos/` folder and
+force-pushes `dist/` to the `gh-pages` branch, which GitHub Pages serves. The
+public repository never receives the original photographs. See
+`DEPLOYMENT.md` for the one-time Pages setting and Nginx instructions.
 
 ## Controls
 
@@ -74,7 +79,7 @@ Closing a photograph releases its full-resolution decode. The detail image is fe
 
 The last frames of the close animation show a viewport-sized bitmap of the settled wall (`captureCloseCover`). It is drawn from the same brick geometry and thumbnails as the live wall, so the frame is identical apart from the soft brick shadows; it covers the moment when the compositor commits the settled 1x raster and can otherwise present the page background for a frame. It is invalidated on resize, pan, layout, or the next open.
 
-`gallery.js` is generated from the contents of `photos/`. After adding, removing, or renaming photographs, run `scan.ps1` again before refreshing the page.
+`gallery.js` is generated from the contents of `photos/` and is ignored by git, like the photographs themselves. After adding, removing, or renaming photographs, run `scan.ps1` again before refreshing the page; `deploy.ps1` runs it automatically.
 
 ## Validation
 

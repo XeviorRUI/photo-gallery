@@ -1,0 +1,31 @@
+name: Validate gallery
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # The build pipeline uses System.Drawing (GDI+), which comes from the
+      # .NET Framework assemblies in Windows PowerShell 5.1; PowerShell 7 only
+      # carries a facade that forwards those types to System.Drawing.Common.
+      - name: Core tests
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          node --test tests/core.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build tests
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./tests/build.tests.ps1
