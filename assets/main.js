@@ -277,11 +277,16 @@
     clearHiddenBricks();
     const anchor = laidOut ? captureAnchor() : savedView.anchor;
 
-    padTop = Math.min(104, Math.max(64, Math.round(vh * 0.115)));
-    const edgePeek = Math.min(54, Math.max(30, Math.round(vh * 0.055)));
+    const layoutHeight = behindChrome && uiVh ? uiVh : vh;
+    padTop = Math.min(104, Math.max(64, Math.round(layoutHeight * 0.115)));
+    const edgePeek = Math.min(54, Math.max(30, Math.round(layoutHeight * 0.055)));
+    // In the behind-chrome mode the real, clickable rows stop at the visible
+    // viewport; the decorative peek row starts there and continues under
+    // Safari's toolbar, so nothing tappable hides behind the browser chrome.
+    const bottomReserve = behindChrome ? GAP : PAD_BOTTOM + edgePeek + GAP;
     const availableHeight = Math.max(
       MIN_ROW_H,
-      vh - padTop - PAD_BOTTOM - edgePeek - GAP
+      layoutHeight - padTop - bottomReserve
     );
     const desiredRowHeight = Math.min(300, Math.max(140, availableHeight / 4.2));
     let rows;
