@@ -11,9 +11,10 @@
   const MIN_ROW_H = 110;
   const CLICK_MAX_MOVE = 8;
   const FLING_SAMPLE_MS = 110;
+  const FLING_END_WINDOW_MS = 55;
   const FLING_STALE_MS = 90;
   const FLING_MIN_VELOCITY = 0.02;
-  const FLING_MAX_VELOCITY = 4;
+  const FLING_MAX_VELOCITY = 6;
   const FLING_TIME_CONSTANT = 320;
   const FLING_FRAME_MAX = 48;
   const PREFETCH = 0.42;
@@ -374,6 +375,12 @@
     return point ? { x: point.clientX, y: point.clientY } : null;
   }
 
+  function interactionTime(event) {
+    const stamp = event && event.timeStamp;
+    const now = performance.now();
+    return Number.isFinite(stamp) && stamp > 0 && Math.abs(stamp - now) < 5000 ? stamp : now;
+  }
+
   function beginInteraction(event, touch) {
     if (scene.mode !== 'wall') return;
     if (!touch && event.button !== 0) return;
@@ -381,7 +388,7 @@
     if (!point) return;
     stopInertia();
     stopWheelInertia();
-    const now = performance.now();
+    const now = interactionTime(event);
     interaction = {
       startX: point.x,
       startPan: pan,
@@ -397,7 +404,7 @@
     const point = pointFromEvent(event, touch);
     if (!point) return;
     const deltaX = point.x - interaction.startX;
-    const now = performance.now();
+    const now = interactionTime(event);
     interaction.samples.push({ x: point.x, time: now });
     while (interaction.samples.length > 2 && now - interaction.samples[0].time > FLING_SAMPLE_MS) {
       interaction.samples.shift();
@@ -423,7 +430,7 @@
     if (now - last.time < 2) { endX = last.x; endTime = last.time; }
     let first = samples[0];
     for (let index = 0; index < samples.length; index++) {
-      if (endTime - samples[index].time <= FLING_SAMPLE_MS) { first = samples[index]; break; }
+      if (endTime - samples[index].time <= FLING_END_WINDOW_MS) { first = samples[index]; break; }
     }
     const elapsed = endTime - first.time;
     if (elapsed < 8) return 0;
@@ -447,7 +454,7 @@
 
     dragMoved = false;
     const point = pointFromEvent(event, touch);
-    const now = performance.now();
+    const now = interactionTime(event);
     const velocity = releaseVelocity(completed.samples,
       point ? point.x : completed.samples[completed.samples.length - 1].x, now);
     startInertia(velocity);
