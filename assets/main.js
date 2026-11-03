@@ -30,6 +30,10 @@
   const FLOAT_SCALE = 1.045;
   const WHEEL_SPEED_LIMIT = 2.6;
   const WHEEL_INPUT_SCALE = 0.007;
+  // Experimental: lay the wall out to the large viewport so its bottom peek can
+  // sit under Safari's floating toolbar, while the lightbox stays in the
+  // visible viewport. Enabled with ?behind=1.
+  const behindChrome = new URLSearchParams(location.search).get('behind') === '1';
   const rawConfig = window.GALLERY_CONFIG || {};
   const siteConfig = {
     title: typeof rawConfig.title === 'string' && rawConfig.title.trim()
@@ -57,6 +61,7 @@
   const $ = (selector, root) => (root || document).querySelector(selector);
 
   const stage = $('#stage');
+  if (behindChrome) stage.classList.add('behind-chrome');
   const wall = $('#wall');
   const emptyState = $('#emptyState');
   const metaEl = $('#wallMeta');
@@ -64,6 +69,7 @@
   const siteTitle = $('#siteTitle');
   const siteSubtitle = $('#siteSubtitle');
   const lightbox = $('#lightbox');
+  if (behindChrome) lightbox.classList.add('behind-chrome');
   const focusBackdrop = $('#focusBackdrop');
   const focusLayer = $('#focusLayer');
   const lbTitle = $('#lbTitle');
@@ -109,6 +115,7 @@
   let orderPosByItem = [];
   let vw = 0;
   let vh = 0;
+  let uiVh = 0;
   let padTop = 0;
   let rowCount = 0;
   let rowH = 0;
@@ -199,6 +206,20 @@
     const rect = stage.getBoundingClientRect();
     vw = rect.width;
     vh = rect.height;
+    uiVh = vh;
+    if (behindChrome) {
+      // The wall can extend under Safari's toolbar, but anything the visitor
+      // must tap or read (focus photograph, close button, caption) stays in the
+      // visible viewport above it. Different iOS versions expose that height
+      // through different sources, so take the smallest reliable one.
+      const candidates = [vh];
+      if (window.visualViewport && window.visualViewport.height > 0) {
+        candidates.push(window.visualViewport.height);
+      }
+      const box = parseFloat(getComputedStyle(lightbox).height);
+      if (Number.isFinite(box) && box > 0) candidates.push(box);
+      uiVh = Math.max(1, Math.min.apply(null, candidates));
+    }
     return vw > 0 && vh > 0;
   }
 
@@ -918,7 +939,7 @@
     const compact = vw <= 720;
     const topInset = compact ? 24 : 44;
     const bottomInset = compact ? 104 : 138;
-    const usableHeight = Math.max(180, vh - topInset - bottomInset);
+    const usableHeight = Math.max(180, (uiVh || vh) - topInset - bottomInset);
     return {
       centerX: vw / 2,
       centerY: topInset + usableHeight / 2,
@@ -1258,18 +1279,19 @@
 
   function captureCloseCover() {
     if (scene.mode !== 'focused' || !activePlacement || !vw || !vh) return;
+    const viewHeight = uiVh || vh;
     const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(vw * ratio));
-    canvas.height = Math.max(1, Math.round(vh * ratio));
+    canvas.height = Math.max(1, Math.round(viewHeight * ratio));
     const context = canvas.getContext('2d');
     if (!context) return;
     context.scale(ratio, ratio);
     // The close animation settles on the wall view centred on the photograph's
     // home anchor, not on the pan that was current before the camera flew in.
     const camera = wallCameraForPlacement(activePlacement);
-    drawWallView(context, vw, vh, camera.tx);
-    closeCover = { canvas: canvas, vw: vw, vh: vh, pan: camera.tx };
+    drawWallView(context, vw, viewHeight, camera.tx);
+    closeCover = { canvas: canvas, vw: vw, vh: viewHeight, pan: camera.tx };
   }
 
   function scheduleCloseCoverCapture(token) {
@@ -1284,7 +1306,8 @@
   }
 
   function scheduleCloseCover() {
-    if (!closeCover || !activePlacement || closeCover.vw !== vw || closeCover.vh !== vh) return;
+    if (!closeCover || !activePlacement
+      || closeCover.vw !== vw || closeCover.vh !== (uiVh || vh)) return;
     if (closeCover.pan !== wallCameraForPlacement(activePlacement).tx) return;
     clearTimeout(closeCoverTimer);
     const lead = Math.min(32, Math.round(CAMERA_MOTION_MS * 0.04));
@@ -1295,6 +1318,12 @@
     closeCoverTimer = 0;
     if (!closeCover || closeCoverShown || scene.mode !== 'closing') return;
     closeCover.canvas.className = 'close-cover';
+    if (behindChrome) {
+      // The fixed close cover spans the layout viewport; size it to the visible
+      // viewport so the wall bitmap is not stretched over the toolbar area.
+      closeCover.canvas.style.width = vw + 'px';
+      closeCover.canvas.style.height = (uiVh || vh) + 'px';
+    }
     stage.appendChild(closeCover.canvas);
     closeCoverShown = true;
   }
@@ -1870,6 +1899,9 @@
   }
   window.addEventListener('resize', handleResize);
   window.addEventListener('orientationchange', handleResize);
+  if (behindChrome && window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleResize);
+  }
 
   function tone(index) {
     const color = items[index].averageColor;
