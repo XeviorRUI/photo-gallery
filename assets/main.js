@@ -119,6 +119,7 @@
   let relayoutQueued = false;
   let layoutDeferred = false;
   let visibilityCheckId = null;
+  let lastVisibilityCheck = 0;
   let inertiaId = null;
   let wheelInertiaId = null;
   let wheelVelocity = 0;
@@ -781,10 +782,17 @@
 
   function scheduleVisibilityCheck() {
     if (visibilityCheckId) return;
-    visibilityCheckId = requestAnimationFrame(() => {
-      visibilityCheckId = null;
-      if (scene.mode === 'wall') ensureVisibleForCameras([normalCamera()]);
-    });
+    const now = performance.now();
+    const wait = Math.max(0, 64 - (now - lastVisibilityCheck));
+    const run = function () {
+      visibilityCheckId = requestAnimationFrame(function () {
+        visibilityCheckId = null;
+        lastVisibilityCheck = performance.now();
+        if (scene.mode === 'wall') ensureVisibleForCameras([normalCamera()]);
+      });
+    };
+    if (wait) visibilityCheckId = setTimeout(run, wait);
+    else run();
   }
 
   function detailSource(index) {
