@@ -136,6 +136,15 @@
   let lightboxWheelDirection = 0;
   let lightboxWheelLastInput = 0;
   let closePreparation = null;
+  // Coordination memo: the expensive pass only runs when the visible ranges or
+  // the semantic state actually change. Pan-only changes refresh the selection.
+  let coordinationBase = '';
+  let coordinationPan = 0;
+  let coordinationDirty = false;
+  let coordinating = false;
+  let coordinationHiddenRevision = 0;
+  let coordinationForegroundRevision = 0;
+  let coordinationLayoutGeneration = 0;
 
   applySiteConfig();
 
@@ -269,6 +278,7 @@
     bricks.length = 0;
     geometry = GalleryLayout.create(widths, rowDefinitions, rowH, GAP, PAD_X);
     cycleW = geometry.cycleWidth;
+    coordinationLayoutGeneration++;
     // Only the viewport is a paint surface; children retain logical wall coordinates.
     wall.style.width = vw + 'px';
     wall.style.height = vh + 'px';
@@ -326,6 +336,7 @@
     });
     mounted = rekeyed;
     if (activePlacement) activePlacement = { brick: activePlacement.brick, x: activePlacement.x + stride };
+    coordinationDirty = true;
   }
 
   function applyPan() {
@@ -586,6 +597,7 @@
     image.alt = ''; image.draggable = false; image.decoding = 'async';
     element.appendChild(image); wall.appendChild(element);
     mounted.set(brick.key, brick); brickByElement.set(element, brick);
+    if (!coordinating) coordinationDirty = true;
     const src = wallSourceForItem(items[brick.itemIdx], Math.max(brick.w, brick.h));
     brick.src = src;
     imageLoader.load(src, 1).catch(error => {
@@ -611,34 +623,45 @@
     if (brickPool.length < 32) brickPool.push(brick);
   }
 
-  function ensureVisibleForCameras(cameras) {
-    if (!geometry || !cameras.length) return;
-    wanted.clear();
-    cameras.forEach(camera => {
-      const scale = Math.max(0.01, camera.scale);
-      const margin = vw * PREFETCH / scale;
-      geometry.visit(-camera.tx / scale - margin, (vw - camera.tx) / scale + margin,
-        -camera.ty / scale - rowH, (vh - camera.ty) / scale + rowH, (row, ordinal) => {
-          const key = row + ':' + ordinal;
-          if (!wanted.has(key)) wanted.set(key, mounted.get(key) || geometry.at(row, ordinal));
-        });
+  // Signature of the logical cells visible from one camera. Contiguous
+  // ordinal ranges per row describe the same set that visit() would emit,
+  // without building a key or descriptor for every brick.
+  function collectVisibleRanges(camera) {
+    if (!geometry) return '';
+    const scale = Math.max(0.01, camera.scale);
+    const margin = vw * PREFETCH / scale;
+    const left = -camera.tx / scale - margin;
+    const right = (vw - camera.tx) / scale + margin;
+    const top = -camera.ty / scale - rowH;
+    const bottom = (vh - camera.ty) / scale + rowH;
+    let row = null, first = 0, last = 0, text = '';
+    geometry.visit(left, right, top, bottom, function (rowId, ordinal) {
+      if (rowId !== row) {
+        if (row !== null) text += row + ':' + first + '-' + last + ',';
+        row = rowId;
+        first = ordinal;
+      }
+      last = ordinal;
     });
-    hiddenBricks.forEach(brick => wanted.set(brick.key, brick));
-    if (activePlacement) wanted.set(activePlacement.brick.key, activePlacement.brick);
-    if (interaction && interaction.brick) {
-      const brick = brickByElement.get(interaction.brick);
-      if (brick) wanted.set(brick.key, brick);
-    }
+    return row === null ? text : text + row + ':' + first + '-' + last;
+  }
+
+  function coordinationBaseKey(cameras) {
+    const parts = [coordinationLayoutGeneration, coordinationHiddenRevision,
+      coordinationForegroundRevision, Math.round(vw) + 'x' + Math.round(vh),
+      keyboardIndex, activeIndex,
+      activePlacement ? activePlacement.brick.key : ''];
+    cameras.forEach(camera => parts.push(collectVisibleRanges(camera)));
     const focused = brickByElement.get(document.activeElement);
-    if (focused) wanted.set(focused.key, focused);
+    parts.push(focused ? focused.key : '');
     const returning = brickByElement.get(returnFocus);
-    if (returning) wanted.set(returning.key, returning);
-    mounted.forEach((brick, key) => {
-      if (!wanted.has(key)) { recycleBrick(brick); mounted.delete(key); }
-    });
-    wanted.forEach(mountBrick);
-    bricks.length = 0;
-    mounted.forEach(brick => bricks.push(brick));
+    parts.push(returning ? returning.key : '');
+    const interacting = interaction && interaction.brick ? brickByElement.get(interaction.brick) : null;
+    parts.push(interacting ? interacting.key : '');
+    return parts.join('|');
+  }
+
+  function updateSemanticSelection() {
     semantic.clear();
     bricks.forEach(brick => {
       if (brick.decorative) return;
@@ -656,7 +679,55 @@
       const tabIndex = brick === keyboardBrick ? 0 : -1;
       if (brick.el.tabIndex !== tabIndex) brick.el.tabIndex = tabIndex;
     });
-    pruneImages();
+  }
+
+  function ensureVisibleForCameras(cameras) {
+    if (!geometry || !cameras.length) return;
+    const base = coordinationBaseKey(cameras);
+    if (!coordinationDirty && base === coordinationBase) {
+      if (pan === coordinationPan) return;
+      // Only the pan moved inside the same set of cells: refresh which copy is
+      // exposed to keyboard and assistive technology, but skip the rebuild.
+      updateSemanticSelection();
+      coordinationPan = pan;
+      return;
+    }
+    coordinationBase = base;
+    coordinationPan = pan;
+    coordinationDirty = false;
+    coordinating = true;
+    try {
+      wanted.clear();
+      cameras.forEach(camera => {
+        const scale = Math.max(0.01, camera.scale);
+        const margin = vw * PREFETCH / scale;
+        geometry.visit(-camera.tx / scale - margin, (vw - camera.tx) / scale + margin,
+          -camera.ty / scale - rowH, (vh - camera.ty) / scale + rowH, (row, ordinal) => {
+            const key = row + ':' + ordinal;
+            if (!wanted.has(key)) wanted.set(key, mounted.get(key) || geometry.at(row, ordinal));
+          });
+      });
+      hiddenBricks.forEach(brick => wanted.set(brick.key, brick));
+      if (activePlacement) wanted.set(activePlacement.brick.key, activePlacement.brick);
+      if (interaction && interaction.brick) {
+        const brick = brickByElement.get(interaction.brick);
+        if (brick) wanted.set(brick.key, brick);
+      }
+      const focused = brickByElement.get(document.activeElement);
+      if (focused) wanted.set(focused.key, focused);
+      const returning = brickByElement.get(returnFocus);
+      if (returning) wanted.set(returning.key, returning);
+      mounted.forEach((brick, key) => {
+        if (!wanted.has(key)) { recycleBrick(brick); mounted.delete(key); }
+      });
+      wanted.forEach(mountBrick);
+      bricks.length = 0;
+      mounted.forEach(brick => bricks.push(brick));
+      updateSemanticSelection();
+      pruneImages();
+    } finally {
+      coordinating = false;
+    }
   }
 
   function pruneImages() {
@@ -696,6 +767,7 @@
   function loadForeground(src, signal) {
     if (signal && signal.aborted) return Promise.reject(cancelledImageError());
     foregroundSources.set(src, (foregroundSources.get(src) || 0) + 1);
+    coordinationForegroundRevision++;
     let released = false;
     // Releases the loader's last consumer as soon as the scene is cancelled, so
     // the loader may drop the request instead of waiting for it to finish.
@@ -705,6 +777,7 @@
       const remaining = foregroundSources.get(src) - 1;
       if (remaining) foregroundSources.set(src, remaining);
       else foregroundSources.delete(src);
+      coordinationForegroundRevision++;
     };
     const onAbort = () => release();
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
@@ -1064,16 +1137,18 @@
   function hideBrick(brick) {
     if (!brick || hiddenBricks.has(brick)) return;
     hiddenBricks.add(brick);
+    coordinationHiddenRevision++;
     brick.el.classList.add('is-focus-source');
   }
 
   function showBrick(brick) {
     if (!brick) return;
-    hiddenBricks.delete(brick);
+    if (hiddenBricks.delete(brick)) coordinationHiddenRevision++;
     brick.el.classList.remove('is-focus-source');
   }
 
   function clearHiddenBricks() {
+    if (hiddenBricks.size) coordinationHiddenRevision++;
     hiddenBricks.forEach(function (brick) {
       brick.el.classList.remove('is-focus-source');
     });
