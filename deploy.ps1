@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
   ============================================================
-  deploy.ps1 — build locally and publish the gallery
+  deploy.ps1 - build locally and publish the gallery
   ------------------------------------------------------------
   Scans the photographs in photos/, builds dist/, and force-pushes that
   directory to the gh-pages branch of the origin remote. Original files are
@@ -12,6 +12,11 @@
     ./deploy.ps1
     ./deploy.ps1 -Message 'Autumn update'
     ./deploy.ps1 -RemoteUrl https://github.com/user/site.git
+    ./deploy.ps1 -SiteUrl https://example.com/gallery/
+
+  The canonical site URL is derived from a GitHub origin remote unless
+  -SiteUrl is passed; it fills the canonical and og:image tags of the static
+  photo pages.
 
   First deployment: after the branch exists, open the repository settings,
   Pages, and choose "Deploy from a branch" -> gh-pages -> / (root).
@@ -20,7 +25,8 @@
 [CmdletBinding()]
 param(
   [string]$Message = '',
-  [string]$RemoteUrl = ''
+  [string]$RemoteUrl = '',
+  [string]$SiteUrl = ''
 )
 
 Set-StrictMode -Version 2.0
@@ -54,8 +60,25 @@ if (Test-Path -LiteralPath $demoDir) {
 Write-Host ("Scanning {0} local images..." -f $images.Count) -ForegroundColor Cyan
 & (Join-Path $root 'scan.ps1') -Root $root
 
+if ([string]::IsNullOrWhiteSpace($RemoteUrl)) {
+  $RemoteUrl = (git -C $root remote get-url origin 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($RemoteUrl)) {
+    throw 'No origin remote found; pass -RemoteUrl explicitly.'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($SiteUrl) -and
+    $RemoteUrl -match 'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$') {
+  $owner = $matches[1].ToLowerInvariant()
+  $repo = $matches[2].ToLowerInvariant()
+  if ($repo -eq ($owner + '.github.io')) { $SiteUrl = "https://$owner.github.io/" }
+  else { $SiteUrl = "https://$owner.github.io/$repo/" }
+  Write-Host ("Canonical site URL: {0}" -f $SiteUrl) -ForegroundColor DarkGray
+}
+
 Write-Host 'Building the deployment directory...' -ForegroundColor Cyan
-& (Join-Path $root 'build.ps1') -Root $root
+$buildArgs = @{ Root = $root }
+if (-not [string]::IsNullOrWhiteSpace($SiteUrl)) { $buildArgs['SiteUrl'] = $SiteUrl }
+& (Join-Path $root 'build.ps1') @buildArgs
 
 $dist = Join-Path $root 'dist'
 if (-not (Test-Path -LiteralPath (Join-Path $dist 'gallery.js'))) {
@@ -65,12 +88,6 @@ if (-not (Test-Path -LiteralPath (Join-Path $dist '.nojekyll'))) {
   throw 'The build did not produce dist/.nojekyll; the branch deployment needs it.'
 }
 
-if ([string]::IsNullOrWhiteSpace($RemoteUrl)) {
-  $RemoteUrl = (git -C $root remote get-url origin 2>$null)
-  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($RemoteUrl)) {
-    throw 'No origin remote found; pass -RemoteUrl explicitly.'
-  }
-}
 if ([string]::IsNullOrWhiteSpace($Message)) {
   $Message = 'Deploy gallery ' + (Get-Date).ToString('yyyy-MM-dd HH:mm')
 }

@@ -61,7 +61,10 @@ re-encoded copies that the gallery serves to visitors.
 1. Put the photographs in `photos/` (subfolders become categories). Remove or
    replace the demo files first if they are still present.
 2. Run `./deploy.ps1`. It scans and builds locally, then force-pushes the
-   generated `dist/` to the `gh-pages` branch of the `origin` remote.
+   generated `dist/` to the `gh-pages` branch of the `origin` remote. A GitHub
+   origin also supplies the canonical site URL (`https://<owner>.github.io/<repo>/`),
+   which fills the canonical and `og:image` tags of the static photo pages; pass
+   `-SiteUrl` to override it for a custom domain.
 3. On the first deployment, open the repository settings, **Pages**, set
    **Source** to **Deploy from a branch**, branch `gh-pages`, folder **/ (root)**.
 4. Later deployments are just `./deploy.ps1`.

@@ -390,7 +390,7 @@ $payload = @{
   total     = $mixed.Count
   items     = $mixed
 }
-$json = ConvertTo-Json -InputObject $payload -Depth 6
+$json = ConvertTo-Json -InputObject $payload -Depth 6 -Compress
 
 $out = if ($OutputPath) { $OutputPath } else { Join-Path $Root 'gallery.js' }
 $content = "/* 本文件由 scan.ps1 自动生成，请勿手动编辑 */`r`nwindow.GALLERY_DATA = " + $json + ";`r`n"
