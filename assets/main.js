@@ -10,6 +10,12 @@
   const PAD_BOTTOM = 26;
   const MIN_ROW_H = 110;
   const CLICK_MAX_MOVE = 8;
+  const FLING_SAMPLE_MS = 110;
+  const FLING_STALE_MS = 90;
+  const FLING_MIN_VELOCITY = 0.02;
+  const FLING_MAX_VELOCITY = 4;
+  const FLING_TIME_CONSTANT = 320;
+  const FLING_FRAME_MAX = 48;
   const PREFETCH = 0.42;
   const MIDDLE_CYCLE = 1;
   const CAMERA_MOTION_MS = 820;
@@ -375,12 +381,11 @@
     if (!point) return;
     stopInertia();
     stopWheelInertia();
+    const now = performance.now();
     interaction = {
       startX: point.x,
       startPan: pan,
-      lastX: point.x,
-      lastTime: performance.now(),
-      velocity: 0,
+      samples: [{ x: point.x, time: now }],
       brick: brickAtPoint(event.target, point.x, point.y),
     };
     dragMoved = false;
@@ -393,10 +398,10 @@
     if (!point) return;
     const deltaX = point.x - interaction.startX;
     const now = performance.now();
-    interaction.velocity = (point.x - interaction.lastX)
-      / Math.max(8, now - interaction.lastTime);
-    interaction.lastX = point.x;
-    interaction.lastTime = now;
+    interaction.samples.push({ x: point.x, time: now });
+    while (interaction.samples.length > 2 && now - interaction.samples[0].time > FLING_SAMPLE_MS) {
+      interaction.samples.shift();
+    }
 
     if (Math.abs(deltaX) > CLICK_MAX_MOVE && !dragMoved) {
       dragMoved = true;
@@ -406,6 +411,23 @@
       if (touch && event.cancelable) event.preventDefault();
       setPan(interaction.startPan + deltaX);
     }
+  }
+
+  function releaseVelocity(samples, x, now) {
+    if (!samples || samples.length < 2) return 0;
+    const last = samples[samples.length - 1];
+    // A finger that rests before lifting should not fling.
+    if (now - last.time > FLING_STALE_MS) return 0;
+    let endX = x;
+    let endTime = now;
+    if (now - last.time < 2) { endX = last.x; endTime = last.time; }
+    let first = samples[0];
+    for (let index = 0; index < samples.length; index++) {
+      if (endTime - samples[index].time <= FLING_SAMPLE_MS) { first = samples[index]; break; }
+    }
+    const elapsed = endTime - first.time;
+    if (elapsed < 8) return 0;
+    return (endX - first.x) / elapsed;
   }
 
   function endInteraction(event, touch) {
@@ -424,20 +446,25 @@
     }
 
     dragMoved = false;
-    startInertia(completed.velocity);
+    const point = pointFromEvent(event, touch);
+    const now = performance.now();
+    const velocity = releaseVelocity(completed.samples,
+      point ? point.x : completed.samples[completed.samples.length - 1].x, now);
+    startInertia(velocity);
   }
 
   function startInertia(velocity) {
     stopInertia();
-    // Preserve the original short glide while using px/ms throughout.
-    let currentVelocity = reducedMotion ? 0 : velocity / 16.7;
+    if (reducedMotion) return;
+    let currentVelocity = Math.max(-FLING_MAX_VELOCITY, Math.min(FLING_MAX_VELOCITY, velocity || 0));
+    if (Math.abs(currentVelocity) < FLING_MIN_VELOCITY) return;
     let lastTime = performance.now();
     const step = function (now) {
-      const deltaTime = Math.min(50, now - lastTime);
+      const deltaTime = Math.min(FLING_FRAME_MAX, Math.max(0, now - lastTime));
       lastTime = now;
-      setPan(pan + currentVelocity * deltaTime);
-      currentVelocity *= Math.pow(0.95, deltaTime / 16.7);
-      if (Math.abs(currentVelocity) > 0.08 / 16.7) inertiaId = requestAnimationFrame(step);
+      if (deltaTime > 0) setPan(pan + currentVelocity * deltaTime);
+      currentVelocity *= Math.exp(-deltaTime / FLING_TIME_CONSTANT);
+      if (Math.abs(currentVelocity) > FLING_MIN_VELOCITY) inertiaId = requestAnimationFrame(step);
       else inertiaId = null;
     };
     inertiaId = requestAnimationFrame(step);
