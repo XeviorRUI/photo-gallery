@@ -968,19 +968,26 @@
   }
 
   function focusMetrics() {
-    const compact = vw <= 720;    const topInset = compact ? 24 : 44;
-    const infoNode = lbInfo;
-    const infoStyles = infoNode ? getComputedStyle(infoNode) : null;
-    const infoContent = infoNode && infoStyles
-      ? Math.max(0, infoNode.scrollHeight - (parseFloat(infoStyles.paddingTop) || 0))
-      : 0;
+    const compact = vw <= 720;
+    const topInset = compact ? 24 : 44;
+    // Measure the actual title+EXIF content, not the anchored .lb-info box:
+    // that box stretches down to the lightbox bottom and would feed the photo's
+    // own height back into the measurement.
+    const titleRow = lbTitle.parentElement;
+    const contentTop = titleRow ? titleRow.getBoundingClientRect().top : 0;
+    const contentBottom = lbChips ? lbChips.getBoundingClientRect().bottom : 0;
+    const infoContent = contentBottom > contentTop ? contentBottom - contentTop : 0;
     const bottomInset = Math.max(compact ? 104 : 138, infoContent + 12);
-    const usableHeight = Math.max(180, (uiVh || vh) - topInset - bottomInset);
+    const viewHeight = uiVh || vh;
+    const centerY = viewHeight / 2;
+    const topRoom = centerY - topInset;
+    const bottomRoom = viewHeight - centerY - bottomInset;
+    const maxHeight = Math.max(180, Math.min(topRoom, bottomRoom) * 2);
     return {
       centerX: vw / 2,
-      centerY: topInset + usableHeight / 2,
+      centerY: centerY,
       maxWidth: Math.min(vw * (compact ? 0.88 : 0.9), 1520),
-      maxHeight: usableHeight,
+      maxHeight: maxHeight,
     };
   }
 
