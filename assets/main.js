@@ -74,6 +74,12 @@
     document.documentElement.classList.add('behind-chrome');
   }
   const focusBackdrop = $('#focusBackdrop');
+  if (behindChrome) {
+    // The lightbox only spans the visible viewport; keep the shade on the page
+    // (the full layout viewport) so the toolbar strip is covered consistently.
+    lightbox.parentNode.insertBefore(focusBackdrop, lightbox);
+    focusBackdrop.classList.add('behind-chrome');
+  }
   const focusLayer = $('#focusLayer');
   const lbTitle = $('#lbTitle');
   const lbCat = $('#lbCat');

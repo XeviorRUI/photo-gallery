@@ -146,6 +146,9 @@ button {
     height: 100lvh;
     overflow: hidden;
   }
+  html.behind-chrome body {
+    position: relative;
+  }
   .stage.behind-chrome {
     position: absolute;
     top: 0;
@@ -294,6 +297,13 @@ button {
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
   will-change: opacity;
+}
+/* In the behind-chrome layout the shade is a stage child covering the whole
+   screen, above the wall/topbar and below the lightbox UI. */
+.focus-backdrop.behind-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
 }
 .focus-layer {
   position: absolute;
