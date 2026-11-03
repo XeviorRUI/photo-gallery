@@ -42,6 +42,15 @@ if ($images.Count -eq 0) {
   throw "No images found under $photos. Add your photographs or remove the demo files first."
 }
 
+$demoDir = Join-Path $photos 'demo'
+if (Test-Path -LiteralPath $demoDir) {
+  $demoImages = @(Get-ChildItem -LiteralPath $demoDir -Recurse -File |
+    Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() })
+  if ($demoImages.Count -gt 0) {
+    Write-Warning ("photos/demo still contains {0} demo image(s); they will be published unless you remove them." -f $demoImages.Count)
+  }
+}
+
 Write-Host ("Scanning {0} local images..." -f $images.Count) -ForegroundColor Cyan
 & (Join-Path $root 'scan.ps1') -Root $root
 
