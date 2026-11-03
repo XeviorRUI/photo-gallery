@@ -1445,6 +1445,7 @@
     stage.inert = true;
     $('#lbClose').focus({ preventScroll: true });
     lightbox.classList.add('is-active');
+    fitChipsRows();
     lightbox.classList.remove('is-ready');
     setBackdrop(false);
 
@@ -1573,6 +1574,7 @@
     const nextStartingRect = rectForPlacement(nextPlacement, previousCamera);
     const nextFloatRect = floatingRect(nextPlacement, nextCamera);
     anchorLightboxInfo(nextFloatRect);
+    fitChipsRows();
 
     await prepareWallForCameras(pinned);
     if (token !== scene.token || scene.mode !== 'switching') return;
@@ -1836,6 +1838,7 @@
     lbChips.appendChild(rowTwo);
     chipRows = [rowOne, rowTwo];
     chipRowCursor = 0;
+    lbChips.classList.remove('single-row');
     const exif = item.exif || {};
     const camera = joinParts(exif.make, exif.model);
     if (camera) addChip('Camera', camera);
@@ -1875,12 +1878,28 @@
     return values.join(' ');
   }
 
+  // If the anchored information band cannot show both EXIF rows, merge them
+  // into one horizontal row. The title row is left untouched.
+  function fitChipsRows() {
+    if (!lbInfo) return;
+    const rows = lbChips.querySelectorAll('.lb-chips-row');
+    if (rows.length < 2) return;
+    if (lbInfo.scrollHeight <= lbInfo.clientHeight + 1) return;
+    const first = rows[0];
+    const second = rows[1];
+    while (second.firstChild) first.appendChild(second.firstChild);
+    second.hidden = true;
+    lbChips.classList.add('single-row');
+    lbChips.scrollLeft = 0;
+  }
+
   // The two EXIF rows share one horizontal scroller. The lightbox's
   // touch-action is reserved for photo paging, so drag it directly and give it
   // the same momentum/deceleration as the wall.
   let chipsDrag = null;
   let chipsSamples = [];
   let chipsFling = 0;
+  let chipsWheelVelocity = 0;
   function stopChipsFling() {
     if (chipsFling) cancelAnimationFrame(chipsFling);
     chipsFling = 0;
@@ -1936,8 +1955,12 @@
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
-    stopChipsFling();
-    lbChips.scrollLeft += delta;
+    // Feed the wheel into the same momentum loop as the drag instead of
+    // assigning scrollLeft per notch (which jumps between positions).
+    const impulse = delta * 0.012;
+    if (chipsWheelVelocity * impulse < 0) chipsWheelVelocity *= 0.25;
+    chipsWheelVelocity = Math.max(-FLING_MAX_VELOCITY, Math.min(FLING_MAX_VELOCITY, chipsWheelVelocity + impulse));
+    startChipsFling(chipsWheelVelocity);
   }, { passive: false });
 
   /* ---------- Lightbox and resize events ---------- */

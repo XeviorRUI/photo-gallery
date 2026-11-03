@@ -311,7 +311,7 @@ button {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 240px;
+  height: 320px;
   background: linear-gradient(to top, var(--bg) 0%, var(--bg) 55%, transparent 100%);
   pointer-events: none;
 }
@@ -400,7 +400,7 @@ button {
   gap: 11px;
   padding: 12px 24px 24px;
   text-align: center;
-  background: var(--info-gradient);
+  background: none;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.24s ease;
@@ -455,7 +455,11 @@ button {
   display: flex;
   gap: 8px;
   width: max-content;
+  flex: 0 0 auto;
 }
+.lb-chips .chip { flex: 0 0 auto; }
+.lb-chips.single-row { flex-direction: row; }
+.lb-chips.single-row .lb-chips-row { flex-wrap: nowrap; }
 .lb-chips::-webkit-scrollbar { display: none; }
 .chip {
   display: inline-flex;
