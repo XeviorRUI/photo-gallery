@@ -448,7 +448,7 @@ button {
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  touch-action: none;
   scrollbar-width: none;
 }
 .lb-chips-row {
