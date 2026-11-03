@@ -205,6 +205,23 @@
   }
 
   /* ---------- Wall layout ---------- */
+  // iOS 26's floating tab bar is not included in the CSS viewport units, so
+  // 100lvh still stops at the bar. The device screen height does include it;
+  // extending the in-flow wall stage that far puts the bottom peek behind the
+  // bar while the fixed lightbox keeps using the visible viewport.
+  function fitBehindChrome() {
+    if (!behindChrome || window.innerWidth > 720) return;
+    const fullHeight = Math.max(
+      window.innerHeight || 0,
+      window.visualViewport ? window.visualViewport.height || 0 : 0,
+      window.screen ? window.screen.height || 0 : 0
+    );
+    if (!fullHeight) return;
+    stage.style.height = fullHeight + 'px';
+    document.documentElement.style.height = fullHeight + 'px';
+    document.body.style.height = fullHeight + 'px';
+  }
+
   function updateViewport() {
     const rect = stage.getBoundingClientRect();
     vw = rect.width;
@@ -1877,6 +1894,7 @@
   function handleResize() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
+      fitBehindChrome();
       if (scene.mode === 'wall') {
         layout();
         return;
@@ -1936,6 +1954,7 @@
   }
 
   setTimeout(function () { hint.classList.add('gone'); }, 7000);
+  fitBehindChrome();
   layout();
   stage.dataset.mode = scene.mode;
   if (location.hash) openFromURL();
