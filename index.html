@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="description" content="A photography portfolio: browse the photo wall, open a photograph, and explore the collection." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20fill%3D%22%230e100f%22%2F%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%228%22%20fill%3D%22none%22%20stroke%3D%22%23e8e6df%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E" />
+<title>Photography Portfolio &middot; MY GALLERY</title>
+<script src="config.js?v=f7a7f9de94177e72"></script>
+<link rel="stylesheet" href="assets/style.css?v=77a131d0d6d9dc6b" />
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <h1 class="site-title" id="siteTitle">MY GALLERY</h1>
+      <p class="site-sub" id="siteSubtitle">Photography portfolio &middot; drag to explore, click to open</p>
+    </div>
+    <div class="meta" id="wallMeta"></div>
+    <select class="collections" id="collections" aria-label="Collection" hidden></select>
+  </div>
+</header>
+
+<main class="stage" id="stage" tabindex="-1">
+  <div class="wall" id="wall" aria-label="Photo wall"></div>
+
+  <div class="empty" id="emptyState" hidden>
+    <p class="empty-title">No photographs yet</p>
+    <p class="empty-tip">There are no photographs in this collection yet.</p>
+  </div>
+
+  <div class="hint" id="hint">Drag or scroll to browse &middot; click a photograph for details</div>
+  <p class="sr-only" id="wallStatus" role="status"></p>
+</main>
+
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-labelledby="lbTitle" aria-describedby="lbDescription">
+  <div class="focus-backdrop" id="focusBackdrop" aria-hidden="true"></div>
+  <button class="lb-btn lb-close" id="lbClose" aria-label="Close">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+  </button>
+  <button class="lb-btn lb-nav lb-prev" id="lbPrev" aria-label="Previous photograph">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
+  <button class="lb-btn lb-nav lb-next" id="lbNext" aria-label="Next photograph">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+
+  <div class="focus-layer" id="focusLayer" aria-hidden="true"></div>
+
+  <div class="lb-info" id="lbInfo">
+    <div class="lb-title-row">
+      <h2 class="lb-title" id="lbTitle"></h2>
+      <span class="lb-cat" id="lbCat" hidden></span>
+      <a class="lb-cat permalink" id="lbPermalink" hidden>Permalink</a>
+    </div>
+    <p class="lb-description" id="lbDescription" hidden></p>
+    <div class="lb-chips" id="lbChips"></div>
+    <p class="sr-only" id="lbStatus" role="status"></p>
+  </div>
+</div>
+
+<script src="gallery.js?v=20261103103401"></script>
+<script src="assets/catalog.js?v=c3b8b8f8c847d847"></script>
+<script src="assets/layout.js?v=2dfe7c870396d4cf"></script>
+<script src="assets/image-loader.js?v=400db5388865aa0f"></script>
+<script src="assets/scene.js?v=9a7005648c933d5f"></script>
+<script src="assets/swipe.js?v=b2fab2a6665829fe"></script>
+<script src="assets/main.js?v=5a9fe81b4a5e176b"></script>
+</body>
+</html>
