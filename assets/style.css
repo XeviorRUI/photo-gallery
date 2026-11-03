@@ -305,6 +305,16 @@ button {
   inset: 0;
   z-index: 40;
 }
+.focus-backdrop.behind-chrome::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 150px;
+  background: linear-gradient(to top, var(--bg) 0%, var(--bg) 40%, transparent 100%);
+  pointer-events: none;
+}
 .focus-layer {
   position: absolute;
   inset: 0;
@@ -385,9 +395,10 @@ button {
   z-index: 4;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   align-items: center;
   gap: 11px;
-  padding: 120px 24px 32px;
+  padding: 12px 24px 24px;
   text-align: center;
   background: var(--info-gradient);
   opacity: 0;
@@ -426,12 +437,9 @@ button {
 }
 .lb-cat, .permalink { flex: 0 0 auto; }
 .lb-chips {
-  display: grid;
-  grid-template-rows: repeat(2, minmax(0, auto));
-  grid-auto-flow: column;
-  grid-auto-columns: max-content;
-  align-content: start;
-  justify-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   width: 92vw;
   max-width: 92vw;
@@ -442,6 +450,11 @@ button {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   scrollbar-width: none;
+}
+.lb-chips-row {
+  display: flex;
+  gap: 8px;
+  width: max-content;
 }
 .lb-chips::-webkit-scrollbar { display: none; }
 .chip {
@@ -491,7 +504,7 @@ button {
   .lb-prev { left: 8px; }
   .lb-next { right: 8px; }
   .lb-close { top: 12px; right: 14px; }
-  .lb-info { padding: 82px 16px 20px; gap: 8px; }
+  .lb-info { padding: 12px 16px 20px; gap: 8px; }
   .lb-title { font-size: 19px; }
   .hint { display: none; }
 }

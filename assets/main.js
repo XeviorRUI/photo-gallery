@@ -84,6 +84,7 @@
   const lbTitle = $('#lbTitle');
   const lbCat = $('#lbCat');
   const lbChips = $('#lbChips');
+  const lbInfo = $('#lbInfo');
 
   const data = (typeof window.GALLERY_DATA !== 'undefined' && window.GALLERY_DATA) || null;
   const allItems = GalleryCatalog.normalize(data);
@@ -967,9 +968,8 @@
   }
 
   function focusMetrics() {
-    const compact = vw <= 720;
-    const topInset = compact ? 24 : 44;
-    const infoNode = $('#lbInfo');
+    const compact = vw <= 720;    const topInset = compact ? 24 : 44;
+    const infoNode = lbInfo;
     const infoStyles = infoNode ? getComputedStyle(infoNode) : null;
     const infoContent = infoNode && infoStyles
       ? Math.max(0, infoNode.scrollHeight - (parseFloat(infoStyles.paddingTop) || 0))
@@ -984,8 +984,14 @@
     };
   }
 
-  function cameraForPlacement(placement) {
-    const metrics = focusMetrics();
+  // Park the information block in the space below the settled photograph and
+  // let its content sit in the vertical centre of that space.
+  function anchorLightboxInfo(rect) {
+    if (!lbInfo || !rect) return;
+    lbInfo.style.top = Math.max(0, Math.round(rect.top + rect.height + 12)) + 'px';
+  }
+
+  function cameraForPlacement(placement) {    const metrics = focusMetrics();
     const scaleByWidth = metrics.maxWidth / (placement.brick.w * FLOAT_SCALE);
     const scaleByHeight = metrics.maxHeight / (placement.brick.h * FLOAT_SCALE);
     const scale = Math.max(0.01, Math.min(7, Math.min(scaleByWidth, scaleByHeight)));
@@ -1422,6 +1428,7 @@
     activePlacement = placement;
     activeCamera = targetCamera;
     activeOverlayRect = targetRect;
+    anchorLightboxInfo(targetRect);
     homeAnchorRatio = Math.max(0, Math.min(1,
       (sourceRect.left + sourceRect.width / 2) / Math.max(1, vw)));
 
@@ -1558,6 +1565,7 @@
     const previousLandingRect = rectForPlacement(previousPlacement, nextCamera);
     const nextStartingRect = rectForPlacement(nextPlacement, previousCamera);
     const nextFloatRect = floatingRect(nextPlacement, nextCamera);
+    anchorLightboxInfo(nextFloatRect);
 
     await prepareWallForCameras(pinned);
     if (token !== scene.token || scene.mode !== 'switching') return;
@@ -1802,6 +1810,9 @@
   window.addEventListener('popstate', openFromURL);
 
   /* ---------- Metadata ---------- */
+  let chipRows = [];
+  let chipRowCursor = 0;
+
   function updateLightboxMeta(item) {
     lbTitle.textContent = item.title || 'Untitled';
     $('#lbDescription').textContent = item.description || '';
@@ -1810,6 +1821,14 @@
     lbCat.hidden = !item.category;
     if (item.category) lbCat.textContent = '#' + item.category;
     lbChips.textContent = '';
+    const rowOne = document.createElement('div');
+    rowOne.className = 'lb-chips-row';
+    const rowTwo = document.createElement('div');
+    rowTwo.className = 'lb-chips-row';
+    lbChips.appendChild(rowOne);
+    lbChips.appendChild(rowTwo);
+    chipRows = [rowOne, rowTwo];
+    chipRowCursor = 0;
     const exif = item.exif || {};
     const camera = joinParts(exif.make, exif.model);
     if (camera) addChip('Camera', camera);
@@ -1822,6 +1841,7 @@
     if (item.width > 0 && item.height > 0) {
       addChip('Resolution', item.width + ' x ' + item.height);
     }
+    stopChipsFling();
     lbChips.scrollLeft = 0;
   }
 
@@ -1836,7 +1856,8 @@
     valueElement.textContent = value;
     chip.appendChild(keyElement);
     chip.appendChild(valueElement);
-    lbChips.appendChild(chip);
+    const row = chipRows.length ? chipRows[chipRowCursor++ % chipRows.length] : lbChips;
+    row.appendChild(chip);
   }
 
   function joinParts() {
@@ -1848,15 +1869,44 @@
   }
 
   // The two EXIF rows share one horizontal scroller. The lightbox's
-  // touch-action is reserved for photo paging, so drag it directly.
+  // touch-action is reserved for photo paging, so drag it directly and give it
+  // the same momentum/deceleration as the wall.
   let chipsDrag = null;
+  let chipsSamples = [];
+  let chipsFling = 0;
+  function stopChipsFling() {
+    if (chipsFling) cancelAnimationFrame(chipsFling);
+    chipsFling = 0;
+  }
+  function startChipsFling(velocity) {
+    stopChipsFling();
+    if (reducedMotion) return;
+    let current = Math.max(-FLING_MAX_VELOCITY, Math.min(FLING_MAX_VELOCITY, velocity || 0));
+    if (Math.abs(current) < FLING_MIN_VELOCITY) return;
+    let last = performance.now();
+    const step = now => {
+      const deltaTime = Math.min(FLING_FRAME_MAX, Math.max(0, now - last));
+      last = now;
+      const max = Math.max(0, lbChips.scrollWidth - lbChips.clientWidth);
+      lbChips.scrollLeft = Math.max(0, Math.min(max, lbChips.scrollLeft + current * deltaTime));
+      current *= Math.exp(-deltaTime / FLING_TIME_CONSTANT);
+      if (Math.abs(current) > FLING_MIN_VELOCITY) chipsFling = requestAnimationFrame(step);
+      else chipsFling = 0;
+    };
+    chipsFling = requestAnimationFrame(step);
+  }
   lbChips.addEventListener('pointerdown', function (event) {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    stopChipsFling();
+    chipsSamples = [{ x: event.clientX, time: performance.now() }];
     chipsDrag = { id: event.pointerId, x: event.clientX, left: lbChips.scrollLeft, moved: false };
     try { lbChips.setPointerCapture(event.pointerId); } catch (_) {}
   });
   lbChips.addEventListener('pointermove', function (event) {
     if (!chipsDrag || event.pointerId !== chipsDrag.id) return;
+    const now = performance.now();
+    chipsSamples.push({ x: event.clientX, time: now });
+    while (chipsSamples.length > 2 && now - chipsSamples[0].time > FLING_SAMPLE_MS) chipsSamples.shift();
     const dx = event.clientX - chipsDrag.x;
     if (!chipsDrag.moved && Math.abs(dx) < 3) return;
     chipsDrag.moved = true;
@@ -1864,7 +1914,12 @@
     if (event.cancelable) event.preventDefault();
   });
   function endChipsDrag(event) {
-    if (chipsDrag && event.pointerId === chipsDrag.id) chipsDrag = null;
+    if (!chipsDrag || event.pointerId !== chipsDrag.id) return;
+    const drag = chipsDrag;
+    chipsDrag = null;
+    if (!drag.moved || event.type === 'pointercancel') return;
+    const velocity = releaseVelocity(chipsSamples, event.clientX, performance.now());
+    startChipsFling(-velocity);
   }
   lbChips.addEventListener('pointerup', endChipsDrag);
   lbChips.addEventListener('pointercancel', endChipsDrag);
@@ -1874,6 +1929,7 @@
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
+    stopChipsFling();
     lbChips.scrollLeft += delta;
   }, { passive: false });
 
@@ -1956,6 +2012,7 @@
       invalidateCloseCover();
       activeCamera = cameraForPlacement(activePlacement);
       activeOverlayRect = floatingRect(activePlacement, activeCamera);
+      anchorLightboxInfo(activeOverlayRect);
       setWallState(activeCamera);
       setOverlayRect(activeOverlay, activeOverlayRect);
       ensureVisibleForCameras([activeCamera]);
@@ -1978,6 +2035,7 @@
         invalidateCloseCover();
         activeCamera = cameraForPlacement(activePlacement);
         activeOverlayRect = floatingRect(activePlacement, activeCamera);
+      anchorLightboxInfo(activeOverlayRect);
         setWallState(activeCamera);
         if (activeOverlay) setOverlayRect(activeOverlay, activeOverlayRect);
         ensureVisibleForCameras([activeCamera]);
