@@ -30,10 +30,10 @@
   const FLOAT_SCALE = 1.045;
   const WHEEL_SPEED_LIMIT = 2.6;
   const WHEEL_INPUT_SCALE = 0.007;
-  // Experimental: lay the wall out to the large viewport so its bottom peek can
-  // sit under Safari's floating toolbar, while the lightbox stays in the
-  // visible viewport. Enabled with ?behind=1.
-  const behindChrome = new URLSearchParams(location.search).get('behind') === '1';
+  // Compact screens lay the wall out to the layout viewport so its bottom peek
+  // can sit behind Safari's floating toolbar, while the fixed lightbox stays in
+  // the visible viewport. Wide screens keep the original fixed-stage design.
+  const behindChrome = window.innerWidth <= 720;
   const rawConfig = window.GALLERY_CONFIG || {};
   const siteConfig = {
     title: typeof rawConfig.title === 'string' && rawConfig.title.trim()

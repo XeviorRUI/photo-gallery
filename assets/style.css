@@ -136,10 +136,10 @@ button {
   overflow: hidden;
   touch-action: none;
 }
-/* Experimental (?behind=1): in-flow content lives in the layout viewport,
-   which extends behind Safari's bottom toolbar (fixed content is clamped to
-   the visual viewport). That is what lets the wall's bottom peek pass under
-   the toolbar; the lightbox stays in the current (dynamic) viewport. */
+/* Compact screens: in-flow content lives in the layout viewport, which extends
+   behind Safari's bottom toolbar (fixed content is clamped to the visual
+   viewport). That is what lets the wall's bottom peek pass under the toolbar;
+   the lightbox stays in the current (dynamic) viewport. */
 @supports (height: 100lvh) {
   html.behind-chrome,
   html.behind-chrome body {
