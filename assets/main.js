@@ -1900,6 +1900,9 @@
   let chipsSamples = [];
   let chipsFling = 0;
   let chipsWheelVelocity = 0;
+  const CHIPS_FLING_TIME_CONSTANT = 200;
+  const CHIPS_FLING_MAX_VELOCITY = 4;
+  const CHIPS_FLING_SCALE = 0.8;
   function stopChipsFling() {
     if (chipsFling) cancelAnimationFrame(chipsFling);
     chipsFling = 0;
@@ -1907,7 +1910,8 @@
   function startChipsFling(velocity) {
     stopChipsFling();
     if (reducedMotion) return;
-    let current = Math.max(-FLING_MAX_VELOCITY, Math.min(FLING_MAX_VELOCITY, velocity || 0));
+    const scaled = (velocity || 0) * CHIPS_FLING_SCALE;
+    let current = Math.max(-CHIPS_FLING_MAX_VELOCITY, Math.min(CHIPS_FLING_MAX_VELOCITY, scaled));
     if (Math.abs(current) < FLING_MIN_VELOCITY) return;
     let last = performance.now();
     const step = now => {
@@ -1915,7 +1919,7 @@
       last = now;
       const max = Math.max(0, lbChips.scrollWidth - lbChips.clientWidth);
       lbChips.scrollLeft = Math.max(0, Math.min(max, lbChips.scrollLeft + current * deltaTime));
-      current *= Math.exp(-deltaTime / FLING_TIME_CONSTANT);
+      current *= Math.exp(-deltaTime / CHIPS_FLING_TIME_CONSTANT);
       if (Math.abs(current) > FLING_MIN_VELOCITY) chipsFling = requestAnimationFrame(step);
       else chipsFling = 0;
     };
@@ -1957,11 +1961,59 @@
     event.stopPropagation();
     // Feed the wheel into the same momentum loop as the drag instead of
     // assigning scrollLeft per notch (which jumps between positions).
-    const impulse = delta * 0.012;
+    const impulse = delta * 0.008;
     if (chipsWheelVelocity * impulse < 0) chipsWheelVelocity *= 0.25;
-    chipsWheelVelocity = Math.max(-FLING_MAX_VELOCITY, Math.min(FLING_MAX_VELOCITY, chipsWheelVelocity + impulse));
+    chipsWheelVelocity = Math.max(-CHIPS_FLING_MAX_VELOCITY, Math.min(CHIPS_FLING_MAX_VELOCITY, chipsWheelVelocity + impulse));
     startChipsFling(chipsWheelVelocity);
   }, { passive: false });
+
+  // iOS Safari can cancel the pointer stream when an ancestor's touch-action
+  // claims the gesture. The scroller sets touch-action:none, and this explicit
+  // touch path drives the same drag + momentum as the pointer path.
+  let chipsTouchId = null;
+  lbChips.addEventListener('touchstart', function (event) {
+    if (event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    chipsTouchId = touch.identifier;
+    stopChipsFling();
+    chipsSamples = [{ x: touch.clientX, time: performance.now() }];
+    chipsDrag = { id: 'touch', x: touch.clientX, left: lbChips.scrollLeft, moved: false };
+    if (event.cancelable) event.preventDefault();
+  }, { passive: false });
+  lbChips.addEventListener('touchmove', function (event) {
+    if (chipsTouchId === null || !chipsDrag || chipsDrag.id !== 'touch') return;
+    let touch = null;
+    for (let index = 0; index < event.touches.length; index++) {
+      if (event.touches[index].identifier === chipsTouchId) { touch = event.touches[index]; break; }
+    }
+    if (!touch) return;
+    const now = performance.now();
+    chipsSamples.push({ x: touch.clientX, time: now });
+    while (chipsSamples.length > 2 && now - chipsSamples[0].time > FLING_SAMPLE_MS) chipsSamples.shift();
+    const dx = touch.clientX - chipsDrag.x;
+    if (!chipsDrag.moved && Math.abs(dx) < 3) {
+      if (event.cancelable) event.preventDefault();
+      return;
+    }
+    chipsDrag.moved = true;
+    lbChips.scrollLeft = chipsDrag.left - dx;
+    if (event.cancelable) event.preventDefault();
+  }, { passive: false });
+  function endChipsTouch(event) {
+    if (chipsTouchId === null) return;
+    let touch = null;
+    for (let index = 0; index < event.changedTouches.length; index++) {
+      if (event.changedTouches[index].identifier === chipsTouchId) { touch = event.changedTouches[index]; break; }
+    }
+    const drag = chipsDrag;
+    chipsTouchId = null;
+    chipsDrag = null;
+    if (!drag || !drag.moved || event.type === 'touchcancel' || !touch) return;
+    const velocity = releaseVelocity(chipsSamples, touch.clientX, performance.now());
+    startChipsFling(-velocity);
+  }
+  lbChips.addEventListener('touchend', endChipsTouch);
+  lbChips.addEventListener('touchcancel', endChipsTouch);
 
   /* ---------- Lightbox and resize events ---------- */
   $('#lbClose').addEventListener('click', closePhoto);
