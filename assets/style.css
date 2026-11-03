@@ -400,15 +400,19 @@ button {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  max-width: 92vw;
 }
 .lb-title {
   margin: 0;
   font-size: 23px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  overflow-wrap: anywhere;
+  min-width: 0;
   max-width: 90vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .lb-cat {
   font-size: 12px;
@@ -418,14 +422,28 @@ button {
   padding: 2px 11px;
   border-radius: 999px;
   letter-spacing: 0.08em;
+  flex: 0 0 auto;
 }
+.lb-cat, .permalink { flex: 0 0 auto; }
 .lb-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, auto));
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  align-content: start;
+  justify-content: start;
   gap: 8px;
+  width: 92vw;
   max-width: 92vw;
+  padding: 1px 1px 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: none;
 }
+.lb-chips::-webkit-scrollbar { display: none; }
 .chip {
   display: inline-flex;
   align-items: baseline;

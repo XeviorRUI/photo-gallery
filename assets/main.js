@@ -969,7 +969,12 @@
   function focusMetrics() {
     const compact = vw <= 720;
     const topInset = compact ? 24 : 44;
-    const bottomInset = compact ? 104 : 138;
+    const infoNode = $('#lbInfo');
+    const infoStyles = infoNode ? getComputedStyle(infoNode) : null;
+    const infoContent = infoNode && infoStyles
+      ? Math.max(0, infoNode.scrollHeight - (parseFloat(infoStyles.paddingTop) || 0))
+      : 0;
+    const bottomInset = Math.max(compact ? 104 : 138, infoContent + 12);
     const usableHeight = Math.max(180, (uiVh || vh) - topInset - bottomInset);
     return {
       centerX: vw / 2,
@@ -1543,6 +1548,7 @@
     const previousCamera = activeCamera;
     const previousOverlay = activeOverlay;
     const previousFloatRect = activeOverlayRect;
+    updateLightboxMeta(items[nextIndex]);
     const nextCamera = cameraForPlacement(nextPlacement);
     // Keep both wall views warm across a switch. They are off-screen behind the
     // photograph, so recycling them would only pay off as a later remount.
@@ -1561,7 +1567,6 @@
     previousOverlay.classList.add('outgoing');
     setOverlayDepth(incomingOverlay, 'background');
     showBrick(previousPlacement.brick);
-    updateLightboxMeta(items[nextIndex]);
 
     const animations = [
       animateWall(previousCamera, nextCamera, motionMs, pinned),
@@ -1817,6 +1822,7 @@
     if (item.width > 0 && item.height > 0) {
       addChip('Resolution', item.width + ' x ' + item.height);
     }
+    lbChips.scrollLeft = 0;
   }
 
   function addChip(key, value) {
@@ -1840,6 +1846,36 @@
     }
     return values.join(' ');
   }
+
+  // The two EXIF rows share one horizontal scroller. The lightbox's
+  // touch-action is reserved for photo paging, so drag it directly.
+  let chipsDrag = null;
+  lbChips.addEventListener('pointerdown', function (event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    chipsDrag = { id: event.pointerId, x: event.clientX, left: lbChips.scrollLeft, moved: false };
+    try { lbChips.setPointerCapture(event.pointerId); } catch (_) {}
+  });
+  lbChips.addEventListener('pointermove', function (event) {
+    if (!chipsDrag || event.pointerId !== chipsDrag.id) return;
+    const dx = event.clientX - chipsDrag.x;
+    if (!chipsDrag.moved && Math.abs(dx) < 3) return;
+    chipsDrag.moved = true;
+    lbChips.scrollLeft = chipsDrag.left - dx;
+    if (event.cancelable) event.preventDefault();
+  });
+  function endChipsDrag(event) {
+    if (chipsDrag && event.pointerId === chipsDrag.id) chipsDrag = null;
+  }
+  lbChips.addEventListener('pointerup', endChipsDrag);
+  lbChips.addEventListener('pointercancel', endChipsDrag);
+  lbChips.addEventListener('wheel', function (event) {
+    if (lbChips.scrollWidth <= lbChips.clientWidth) return;
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (!delta) return;
+    event.preventDefault();
+    event.stopPropagation();
+    lbChips.scrollLeft += delta;
+  }, { passive: false });
 
   /* ---------- Lightbox and resize events ---------- */
   $('#lbClose').addEventListener('click', closePhoto);
