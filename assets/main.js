@@ -1573,7 +1573,6 @@
     const nextStartingRect = rectForPlacement(nextPlacement, previousCamera);
     const nextFloatRect = floatingRect(nextPlacement, nextCamera);
     anchorLightboxInfo(nextFloatRect);
-    fitChipsRows();
 
     await prepareWallForCameras(pinned);
     if (token !== scene.token || scene.mode !== 'switching') return;
