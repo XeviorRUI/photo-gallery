@@ -92,39 +92,50 @@ if ([string]::IsNullOrWhiteSpace($Message)) {
   $Message = 'Deploy gallery ' + (Get-Date).ToString('yyyy-MM-dd HH:mm')
 }
 
-$staging = Join-Path ([IO.Path]::GetTempPath()) ('gallery-gh-pages-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $staging | Out-Null
+# Publish from a persistent deployment repository. The previous fresh temporary
+# repo copied all media and re-hashed every file on every deploy; with ~450
+# images that pause dominated the run. This repo keeps its index, so robocopy
+# only touches changed files and git only hashes those.
+$deployRoot = Join-Path $root '.work\gh-pages-deploy'
+$gitDir = Join-Path $deployRoot 'repo.git'
+$siteDir = Join-Path $deployRoot 'site'
+New-Item -ItemType Directory -Force -Path $deployRoot, $siteDir | Out-Null
+$gitEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 try {
-  # -Force includes dotfiles such as .nojekyll, which the branch deployment needs.
-  Get-ChildItem -LiteralPath $dist -Force | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination $staging -Recurse -Force
+  if (-not (Test-Path -LiteralPath (Join-Path $gitDir 'HEAD'))) {
+    New-Item -ItemType Directory -Force -Path $gitDir | Out-Null
+    git --git-dir=$gitDir init -q 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'git init failed.' }
+    git --git-dir=$gitDir symbolic-ref HEAD refs/heads/gh-pages 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'git symbolic-ref failed.' }
   }
 
-  Push-Location $staging
-  # git prints progress and line-ending warnings on stderr; with ErrorActionPreference
-  # set to Stop, PowerShell 5.1 turns those into terminating errors. Run the git
-  # block with Continue and check every exit code instead.
-  $gitEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try {
-    git init -q 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'git init failed.' }
-    git checkout -q -b gh-pages 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'git checkout -b gh-pages failed.' }
-    git add -A 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'git add failed.' }
-    git -c user.name='gallery-deploy' -c user.email='gallery-deploy@localhost' commit -qm $Message 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'git commit failed.' }
-    git remote add origin $RemoteUrl 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'git remote add failed.' }
-    git push --force origin gh-pages 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'git push failed.' }
-  } finally {
-    $ErrorActionPreference = $gitEap
-    Pop-Location
+  # Mirror the build; robocopy skips unchanged files and removes stale ones.
+  $null = robocopy $dist $siteDir /MIR /NFL /NDL /NJH /NJS /NP
+  if ($LASTEXITCODE -ge 8) {
+    throw ("robocopy failed with exit code {0}." -f $LASTEXITCODE)
   }
+
+  git --git-dir=$gitDir --work-tree=$siteDir add -A 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'git add failed.' }
+  git --git-dir=$gitDir --work-tree=$siteDir diff --cached --quiet 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host 'No deployment changes; still refreshing gh-pages.' -ForegroundColor DarkGray
+  } else {
+    git --git-dir=$gitDir --work-tree=$siteDir -c user.name='gallery-deploy' -c user.email='gallery-deploy@localhost' commit -qm $Message 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'git commit failed.' }
+  }
+
+  $existingRemote = (git --git-dir=$gitDir remote get-url origin 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($existingRemote)) {
+    git --git-dir=$gitDir remote add origin $RemoteUrl 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'git remote add failed.' }
+  }
+  git --git-dir=$gitDir --work-tree=$siteDir push --force origin gh-pages 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'git push failed.' }
 } finally {
-  Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+  $ErrorActionPreference = $gitEap
 }
 
 Write-Host ''
