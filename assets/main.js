@@ -1445,7 +1445,6 @@
     stage.inert = true;
     $('#lbClose').focus({ preventScroll: true });
     lightbox.classList.add('is-active');
-    fitChipsRows();
     lightbox.classList.remove('is-ready');
     setBackdrop(false);
 
@@ -1819,9 +1818,6 @@
   window.addEventListener('popstate', openFromURL);
 
   /* ---------- Metadata ---------- */
-  let chipRows = [];
-  let chipRowCursor = 0;
-
   function updateLightboxMeta(item) {
     lbTitle.textContent = item.title || 'Untitled';
     $('#lbDescription').textContent = item.description || '';
@@ -1830,15 +1826,6 @@
     lbCat.hidden = !item.category;
     if (item.category) lbCat.textContent = '#' + item.category;
     lbChips.textContent = '';
-    const rowOne = document.createElement('div');
-    rowOne.className = 'lb-chips-row';
-    const rowTwo = document.createElement('div');
-    rowTwo.className = 'lb-chips-row';
-    lbChips.appendChild(rowOne);
-    lbChips.appendChild(rowTwo);
-    chipRows = [rowOne, rowTwo];
-    chipRowCursor = 0;
-    lbChips.classList.remove('single-row');
     const exif = item.exif || {};
     const camera = joinParts(exif.make, exif.model);
     if (camera) addChip('Camera', camera);
@@ -1866,8 +1853,7 @@
     valueElement.textContent = value;
     chip.appendChild(keyElement);
     chip.appendChild(valueElement);
-    const row = chipRows.length ? chipRows[chipRowCursor++ % chipRows.length] : lbChips;
-    row.appendChild(chip);
+    lbChips.appendChild(chip);
   }
 
   function joinParts() {
@@ -1878,35 +1864,8 @@
     return values.join(' ');
   }
 
-  // If the anchored information band cannot show both EXIF rows, merge them
-  // into one horizontal row. The title row is left untouched.
-  function fitChipsRows() {
-    if (!lbInfo) return;
-    const rows = lbChips.querySelectorAll('.lb-chips-row');
-    if (rows.length < 2) return;
-    const second = rows[1];
-    const secondRect = second.getBoundingClientRect();
-    const infoRect = lbInfo.getBoundingClientRect();
-    const viewport = window.visualViewport;
-    const visibleTop = viewport ? viewport.offsetTop : 0;
-    // On compact Safari the floating toolbar overlays the bottom of the
-    // lightbox, so keep a toolbar-sized reserve under the second row.
-    const toolbarReserve = behindChrome ? 104 : 0;
-    const visibleBottom = viewport
-      ? viewport.offsetTop + viewport.height - toolbarReserve
-      : window.innerHeight - toolbarReserve;
-    const fitsInfo = secondRect.bottom <= infoRect.bottom - 8;
-    const fitsViewport = secondRect.top >= visibleTop && secondRect.bottom <= visibleBottom - 8;
-    if (fitsInfo && fitsViewport) return;
-    const first = rows[0];
-    while (second.firstChild) first.appendChild(second.firstChild);
-    second.hidden = true;
-    lbChips.classList.add('single-row');
-    lbChips.scrollLeft = 0;
-  }
-
-  // The two EXIF rows share one horizontal scroller. The lightbox's
-  // touch-action is reserved for photo paging, so drag it directly and give it
+  // The EXIF row is one horizontal scroller. The lightbox's touch-action is
+  // reserved for photo paging, so drag it directly and give it momentum.
   // the same momentum/deceleration as the wall.
   let chipsDrag = null;
   let chipsSamples = [];

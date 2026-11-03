@@ -2,6 +2,14 @@
    Photography portfolio visual system
    ============================================================ */
 
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/source-serif-4-latin.woff2") format("woff2");
+}
+
 :root {
   color-scheme: dark;
   --bg: #0e100f;
@@ -57,7 +65,8 @@ body {
     radial-gradient(circle at 8% 84%, var(--page-accent-two), transparent 28rem),
     var(--bg);
   color: var(--ink);
-  font-family: "Times New Roman", Times, serif;
+  font-family: "Source Serif 4", "Source Serif Pro", Georgia, "Times New Roman", Times, serif;
+  font-optical-sizing: auto;
   overflow: hidden;
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
@@ -438,7 +447,7 @@ button {
 .lb-cat, .permalink { flex: 0 0 auto; }
 .lb-chips {
   display: flex;
-  flex-direction: column;
+  flex-wrap: nowrap;
   align-items: flex-start;
   gap: 8px;
   width: 92vw;
@@ -451,15 +460,7 @@ button {
   touch-action: none;
   scrollbar-width: none;
 }
-.lb-chips-row {
-  display: flex;
-  gap: 8px;
-  width: max-content;
-  flex: 0 0 auto;
-}
 .lb-chips .chip { flex: 0 0 auto; }
-.lb-chips.single-row { flex-direction: row; }
-.lb-chips.single-row .lb-chips-row { flex-wrap: nowrap; }
 .lb-chips::-webkit-scrollbar { display: none; }
 .chip {
   display: inline-flex;
