@@ -1884,9 +1884,21 @@
     if (!lbInfo) return;
     const rows = lbChips.querySelectorAll('.lb-chips-row');
     if (rows.length < 2) return;
-    if (lbInfo.scrollHeight <= lbInfo.clientHeight + 1) return;
-    const first = rows[0];
     const second = rows[1];
+    const secondRect = second.getBoundingClientRect();
+    const infoRect = lbInfo.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const visibleTop = viewport ? viewport.offsetTop : 0;
+    // On compact Safari the floating toolbar overlays the bottom of the
+    // lightbox, so keep a toolbar-sized reserve under the second row.
+    const toolbarReserve = behindChrome ? 104 : 0;
+    const visibleBottom = viewport
+      ? viewport.offsetTop + viewport.height - toolbarReserve
+      : window.innerHeight - toolbarReserve;
+    const fitsInfo = secondRect.bottom <= infoRect.bottom - 8;
+    const fitsViewport = secondRect.top >= visibleTop && secondRect.bottom <= visibleBottom - 8;
+    if (fitsInfo && fitsViewport) return;
+    const first = rows[0];
     while (second.firstChild) first.appendChild(second.firstChild);
     second.hidden = true;
     lbChips.classList.add('single-row');
