@@ -1894,6 +1894,7 @@
 
   // Ratings stay in this tab only: the EXIF rating is the default and any
   // click is kept in memory until the page is closed or reloaded.
+  let suppressRatingClickUntil = 0;
   lbRatingStars.forEach((star, index) => {
     const value = index + 1;
     star.addEventListener('pointerenter', () => {
@@ -1902,6 +1903,10 @@
     star.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (performance.now() < suppressRatingClickUntil) {
+        suppressRatingClickUntil = 0;
+        return;
+      }
       const item = items[activeIndex];
       if (!item) return;
       const current = ratings.has(item.id) ? ratings.get(item.id) : ratingBaseline(item);
@@ -1915,6 +1920,70 @@
   if (lbRating) {
     lbRating.addEventListener('pointerleave', () => {
       lbRatingStars.forEach(entry => entry.classList.remove('is-preview'));
+    });
+  }
+
+  // Touch screens have no hover. A drag across the stars previews the same
+  // values as the mouse; lifting the finger commits the previewed value.
+  let ratingTouch = null;
+  function previewRating(value) {
+    lbRatingStars.forEach((entry, i) => entry.classList.toggle('is-preview', i < value));
+  }
+  function ratingValueAt(clientX) {
+    if (!lbRating || !lbRatingStars.length) return 0;
+    const bounds = lbRating.getBoundingClientRect();
+    if (clientX < bounds.left - 16 || clientX > bounds.right + 16) return 0;
+    let value = 0;
+    let best = Infinity;
+    lbRatingStars.forEach((star, index) => {
+      const rect = star.getBoundingClientRect();
+      const distance = Math.abs(clientX - (rect.left + rect.width / 2));
+      if (distance < best) { best = distance; value = index + 1; }
+    });
+    return value;
+  }
+  function finishRatingTouch(event, commit) {
+    if (!ratingTouch || event.pointerId !== ratingTouch.pointerId) return;
+    const touch = ratingTouch;
+    ratingTouch = null;
+    try { lbRating.releasePointerCapture(event.pointerId); } catch (error) {}
+    previewRating(0);
+    if (!commit || touch.value < 1) return;
+    const item = items[activeIndex];
+    if (!item) return;
+    const current = ratings.has(item.id) ? ratings.get(item.id) : ratingBaseline(item);
+    ratings.set(item.id, touch.moved ? touch.value : (current === touch.value ? 0 : touch.value));
+    renderRating(item);
+    suppressRatingClickUntil = performance.now() + 600;
+  }
+  if (lbRating) {
+    lbRating.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' || !lbRatingStars.length) return;
+      if (!items[activeIndex]) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const value = ratingValueAt(event.clientX);
+      ratingTouch = { pointerId: event.pointerId, value, startValue: value, moved: false };
+      previewRating(value);
+      try { lbRating.setPointerCapture(event.pointerId); } catch (error) {}
+    });
+    lbRating.addEventListener('pointermove', (event) => {
+      if (!ratingTouch || event.pointerId !== ratingTouch.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const value = ratingValueAt(event.clientX);
+      if (value !== ratingTouch.startValue) ratingTouch.moved = true;
+      ratingTouch.value = value;
+      previewRating(value);
+    });
+    lbRating.addEventListener('pointerup', (event) => {
+      if (event.pointerType === 'mouse') return;
+      event.preventDefault();
+      event.stopPropagation();
+      finishRatingTouch(event, true);
+    });
+    lbRating.addEventListener('pointercancel', (event) => {
+      finishRatingTouch(event, false);
     });
   }
 

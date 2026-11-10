@@ -403,6 +403,9 @@ button {
   transform: translate(-50%, -50%);
   opacity: 0;
   pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   transition: opacity 0.24s ease;
 }
 .lightbox.is-ready .lb-rating { opacity: 1; pointer-events: auto; }
