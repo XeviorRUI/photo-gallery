@@ -85,6 +85,9 @@
   const lbCat = $('#lbCat');
   const lbChips = $('#lbChips');
   const lbInfo = $('#lbInfo');
+  const lbRating = $('#lbRating');
+  const lbRatingStars = lbRating ? Array.from(lbRating.querySelectorAll('.lb-star')) : [];
+  const ratings = new Map();
 
   const data = (typeof window.GALLERY_DATA !== 'undefined' && window.GALLERY_DATA) || null;
   const allItems = GalleryCatalog.normalize(data);
@@ -996,6 +999,13 @@
   function anchorLightboxInfo(rect) {
     if (!lbInfo || !rect) return;
     lbInfo.style.top = Math.max(0, Math.round(rect.top + rect.height + 12)) + 'px';
+    if (lbRating) {
+      const compact = vw <= 720;
+      const topbarBottom = (compact ? 12 : 22) + 44;
+      const photoTop = Math.max(topbarBottom + 8, rect.top);
+      const center = Math.max(topbarBottom + 20, Math.min(photoTop - 20, (topbarBottom + photoTop) / 2));
+      lbRating.style.top = Math.round(center) + 'px';
+    }
   }
 
   function cameraForPlacement(placement) {    const metrics = focusMetrics();
@@ -1839,6 +1849,7 @@
     }
     stopChipsFling();
     lbChips.scrollLeft = 0;
+    renderRating(item);
   }
 
   function addChip(key, value) {
@@ -1862,6 +1873,42 @@
     }
     return values.join(' ');
   }
+
+  function ratingBaseline(item) {
+    if (!item) return 0;
+    return Math.max(0, Math.min(5, Math.round(Number(item.rating) || 0)));
+  }
+
+  function renderRating(item) {
+    const value = item && ratings.has(item.id) ? ratings.get(item.id) : ratingBaseline(item);
+    lbRatingStars.forEach((star, index) => {
+      const on = index < value;
+      star.classList.toggle('is-on', on);
+      star.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  // Ratings stay in this tab only: the EXIF rating is the default and any
+  // click is kept in memory until the page is closed or reloaded.
+  lbRatingStars.forEach((star, index) => {
+    const value = index + 1;
+    star.addEventListener('pointerenter', () => {
+      lbRatingStars.forEach((entry, i) => entry.classList.toggle('is-preview', i < value));
+    });
+    star.addEventListener('pointerleave', () => {
+      lbRatingStars.forEach(entry => entry.classList.remove('is-preview'));
+    });
+    star.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const item = items[activeIndex];
+      if (!item) return;
+      const current = ratings.has(item.id) ? ratings.get(item.id) : ratingBaseline(item);
+      ratings.set(item.id, current === value ? 0 : value);
+      renderRating(item);
+      lbRatingStars.forEach(entry => entry.classList.remove('is-preview'));
+    });
+  });
 
   // The EXIF row is one horizontal scroller. The lightbox's touch-action is
   // reserved for photo paging, so drag it directly and give it momentum.
