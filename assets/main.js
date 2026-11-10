@@ -313,11 +313,13 @@
       return Math.max(40, itemAspect(items[itemIndex]) * rowH);
     });
     rowStride = chooseRowStride(widths);
+    const rowPhase = value => GalleryLayout.mod(value * 0.37 + 0.13, 1);
     const rowDefinitions = [{
       row: -1,
       y: padTop - GAP - rowH,
       offset: -1,
       stride: rowStride,
+      phase: rowPhase(-1),
       decorative: true,
     }];
     for (let row = 0; row < rowCount; row++) {
@@ -326,6 +328,7 @@
         y: padTop + row * (rowH + GAP),
         offset: row,
         stride: rowStride,
+        phase: rowPhase(row),
         decorative: false,
       });
     }
@@ -334,6 +337,7 @@
       y: padTop + rowCount * (rowH + GAP),
       offset: rowCount,
       stride: rowStride,
+      phase: rowPhase(rowCount),
       decorative: true,
     });
 
@@ -346,7 +350,7 @@
     // Only the viewport is a paint surface; children retain logical wall coordinates.
     wall.style.width = vw + 'px';
     wall.style.height = vh + 'px';
-    pan = -cycleW;
+    pan = -cycleW - (geometry.maxPhase || 0) - PAD_X;
     if (anchor && itemById.has(anchor.id)) {
       const brick = geometry.copy(0, orderPosByItem[itemById.get(anchor.id)], 1);
       pan = vw * (anchor.screen ?? 0.5) - brick.x - brick.w * (anchor.fraction ?? 0.5);

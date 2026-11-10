@@ -21,21 +21,26 @@
       // same sequence on every row. A stride that is not coprime with the
       // catalogue would make a row show only part of it, so it falls back to 1.
       const stride = row.stride && gcd(row.stride, count) === 1 ? row.stride : 1;
+      // Every row repeats over the same catalogue width. If all rows start
+      // that repeat at the same x, the gutter at the catalogue boundary lines
+      // up into one vertical seam, so shift each row's cycle by a stable phase.
+      const phaseX = ((((Number(row.phase) || 0) % 1) + 1) % 1) * cycleWidth;
       const order = new Array(count);
       const prefix = [0];
       for (let i = 0; i < count; i++) {
         order[i] = mod(row.offset + i * stride, count);
         prefix.push(prefix[i] + widths[order[i]] + gap);
       }
-      return [row.row, { ...row, stride, order, prefix, inverse: inverse(stride, count) }];
+      return [row.row, { ...row, stride, phaseX, order, prefix, inverse: inverse(stride, count) }];
     }));
+    const maxPhase = Math.max(0, ...Array.from(definitions.values(), row => row.phaseX));
     function at(rowId, ordinal) {
       const row = definitions.get(rowId);
       const position = mod(ordinal, count);
       const cycle = Math.floor(ordinal / count);
       const orderPos = row.order[position];
       return { key: rowId + ':' + ordinal, row: rowId, ordinal, cycle, orderPos,
-        x: padding + cycle * cycleWidth + row.prefix[position], y: row.y,
+        x: padding + row.phaseX + cycle * cycleWidth + row.prefix[position], y: row.y,
         w: widths[orderPos], h: height, decorative: row.decorative };
     }
     function positionOf(row, orderPos) {
@@ -58,8 +63,9 @@
       if (!count || !cycleWidth) return;
       for (const row of definitions.values()) {
         if (row.y + height < top || row.y > bottom) continue;
-        let cycle = Math.floor((left - padding) / cycleWidth);
-        const local = left - padding - cycle * cycleWidth;
+        const base = padding + row.phaseX;
+        let cycle = Math.floor((left - base) / cycleWidth);
+        const local = left - base - cycle * cycleWidth;
         let low = 0, high = count;
         while (low < high) {
           const mid = (low + high) >>> 1;
@@ -68,7 +74,7 @@
         }
         let position = Math.min(low, count - 1);
         let ordinal = cycle * count + position;
-        let x = padding + cycle * cycleWidth + row.prefix[position];
+        let x = base + cycle * cycleWidth + row.prefix[position];
         while (x <= right) {
           const width = widths[row.order[position]];
           if (x + width >= left) callback(row.row, ordinal);
@@ -77,7 +83,7 @@
         }
       }
     }
-    return { at, copy, query, visit, cycleWidth, count };
+    return { at, copy, query, visit, cycleWidth, count, maxPhase };
   }
   const api = { create, mod, gcd };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
