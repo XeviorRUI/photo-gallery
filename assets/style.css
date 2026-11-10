@@ -16,7 +16,7 @@
   --ink: #f5f2e9;
   --muted: rgba(245, 242, 233, 0.62);
   --line: rgba(245, 242, 233, 0.18);
-  --rating: #e6b450;
+  --rating: #ffc93c;
   --chip-bg: rgba(245, 242, 233, 0.09);
   --page-accent-one: rgba(114, 126, 103, 0.11);
   --page-accent-two: rgba(160, 111, 65, 0.08);
@@ -421,10 +421,11 @@ button {
   display: block;
   width: 100%;
   height: 100%;
-  fill: none;
+  fill: transparent;
   stroke: currentColor;
   stroke-width: 1.5;
   stroke-linejoin: round;
+  transition: fill 0.12s ease, stroke 0.12s ease;
 }
 .lb-star.is-on svg,
 .lb-star.is-preview svg { fill: var(--rating); stroke: var(--rating); }

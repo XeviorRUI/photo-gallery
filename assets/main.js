@@ -1895,9 +1895,6 @@
     star.addEventListener('pointerenter', () => {
       lbRatingStars.forEach((entry, i) => entry.classList.toggle('is-preview', i < value));
     });
-    star.addEventListener('pointerleave', () => {
-      lbRatingStars.forEach(entry => entry.classList.remove('is-preview'));
-    });
     star.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1909,6 +1906,13 @@
       lbRatingStars.forEach(entry => entry.classList.remove('is-preview'));
     });
   });
+  // Clear the hover preview only when leaving the whole control; clearing it
+  // between adjacent stars made the gold flicker while moving across them.
+  if (lbRating) {
+    lbRating.addEventListener('pointerleave', () => {
+      lbRatingStars.forEach(entry => entry.classList.remove('is-preview'));
+    });
+  }
 
   // The EXIF row is one horizontal scroller. The lightbox's touch-action is
   // reserved for photo paging, so drag it directly and give it momentum.
