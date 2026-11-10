@@ -1404,6 +1404,33 @@
   }
 
   /* ---------- Open, switch, close ---------- */
+  let metaSwapToken = 0;
+  let metaSwapTimer = null;
+
+  function cancelMetaSwap() {
+    metaSwapToken++;
+    if (metaSwapTimer !== null) { clearTimeout(metaSwapTimer); metaSwapTimer = null; }
+    lightbox.classList.remove('is-meta-swapping');
+  }
+
+  // Fade the title/EXIF/rating out, swap them while invisible, then fade the
+  // new photograph's information back in instead of snapping it in one frame.
+  function beginMetaSwap(item, rect) {
+    const token = ++metaSwapToken;
+    if (metaSwapTimer !== null) clearTimeout(metaSwapTimer);
+    lightbox.classList.add('is-meta-swapping');
+    metaSwapTimer = setTimeout(() => {
+      metaSwapTimer = null;
+      if (token !== metaSwapToken) return;
+      updateLightboxMeta(item);
+      anchorLightboxInfo(rect);
+      requestAnimationFrame(() => {
+        if (token !== metaSwapToken) return;
+        lightbox.classList.remove('is-meta-swapping');
+      });
+    }, 120);
+  }
+
   async function openPhoto(itemIndex, sourceElement) {
     if (scene.mode !== 'wall' || itemIndex < 0 || itemIndex >= items.length) return;
     const sourceBrick = findBrickByElement(sourceElement);
@@ -1414,6 +1441,7 @@
     closePreparation = null;
     invalidateCloseCover();
     clearNavigationInput();
+    cancelMetaSwap();
     const token = sceneStart('opening');
     returnFocus = sourceElement;
     updateLightboxMeta(items[itemIndex]);
@@ -1576,7 +1604,6 @@
     const previousCamera = activeCamera;
     const previousOverlay = activeOverlay;
     const previousFloatRect = activeOverlayRect;
-    updateLightboxMeta(items[nextIndex]);
     const nextCamera = cameraForPlacement(nextPlacement);
     // Keep both wall views warm across a switch. They are off-screen behind the
     // photograph, so recycling them would only pay off as a later remount.
@@ -1586,7 +1613,7 @@
     const previousLandingRect = rectForPlacement(previousPlacement, nextCamera);
     const nextStartingRect = rectForPlacement(nextPlacement, previousCamera);
     const nextFloatRect = floatingRect(nextPlacement, nextCamera);
-    anchorLightboxInfo(nextFloatRect);
+    beginMetaSwap(items[nextIndex], nextFloatRect);
 
     await prepareWallForCameras(pinned);
     if (token !== scene.token || scene.mode !== 'switching') return;

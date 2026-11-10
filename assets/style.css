@@ -458,6 +458,11 @@ button {
   transition: opacity 0.24s ease;
 }
 .lightbox.is-ready .lb-info { opacity: 1; }
+.lightbox.is-ready.is-meta-swapping .lb-info,
+.lightbox.is-ready.is-meta-swapping .lb-rating {
+  opacity: 0;
+  transition-duration: 0.12s;
+}
 .lb-title-row {
   display: flex;
   align-items: center;
