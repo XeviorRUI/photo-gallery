@@ -1428,7 +1428,7 @@
         if (token !== metaSwapToken) return;
         lightbox.classList.remove('is-meta-swapping');
       });
-    }, 120);
+    }, 200);
   }
 
   async function openPhoto(itemIndex, sourceElement) {

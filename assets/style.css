@@ -406,7 +406,7 @@ button {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  transition: opacity 0.24s ease;
+  transition: opacity 0.34s ease;
 }
 .lightbox.is-ready .lb-rating { opacity: 1; pointer-events: auto; }
 .lb-star {
@@ -455,13 +455,13 @@ button {
   background: none;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.24s ease;
+  transition: opacity 0.34s ease;
 }
 .lightbox.is-ready .lb-info { opacity: 1; }
 .lightbox.is-ready.is-meta-swapping .lb-info,
 .lightbox.is-ready.is-meta-swapping .lb-rating {
   opacity: 0;
-  transition-duration: 0.12s;
+  transition-duration: 0.2s;
 }
 .lb-title-row {
   display: flex;
