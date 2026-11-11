@@ -1874,7 +1874,7 @@
     if (exif.exposure) addChip('Shutter', exif.exposure);
     if (exif.iso) addChip('ISO', exif.iso);
     if (exif.focal) addChip('Focal length', exif.focal);
-    if (exif.taken) addChip('Captured', exif.taken);
+    if (exif.taken) addChip('Captured at', exif.taken);
     if (item.width > 0 && item.height > 0) {
       addChip('Resolution', item.width + ' x ' + item.height);
     }
