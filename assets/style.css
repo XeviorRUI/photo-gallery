@@ -353,6 +353,9 @@ button {
   border-radius: 0;
   pointer-events: auto;
   transform-origin: 0 0;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .focus-photo.incoming { z-index: 3; }
 .focus-photo.outgoing { z-index: 2; }
@@ -372,6 +375,7 @@ button {
   object-fit: cover;
   border-radius: 0;
   -webkit-user-drag: none;
+  -webkit-touch-callout: none;
   user-select: none;
 }
 

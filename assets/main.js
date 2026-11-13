@@ -2164,6 +2164,59 @@
   });
   lightbox.addEventListener('pointercancel', event => swipe.cancel(event.pointerId));
   lightbox.addEventListener('lostpointercapture', event => swipe.cancel(event.pointerId));
+
+  /* ---------- Touch long-press: photo-only viewer ---------- */
+  // A long-press on the focused photograph opens the detail image URL in the
+  // browser, which hands it to the platform's native image viewer: pinch-zoom,
+  // save and share, with no gallery chrome around it.
+  let photoLongPress = null;
+
+  function cancelPhotoLongPress() {
+    photoLongPress = null;
+  }
+
+  function openPhotoOnlyView() {
+    if (scene.mode !== 'focused' || activeIndex < 0 || !activeOverlay) return;
+    const src = detailSource(activeIndex);
+    if (!src) return;
+    let url;
+    try { url = new URL(src, location.href).href; } catch (_) { return; }
+    // Keep the gallery in the original tab when a new one is allowed. If the
+    // browser blocks the popup, navigate instead so the native viewer still opens.
+    const viewer = window.open(url, '_blank');
+    if (viewer) { try { viewer.opener = null; } catch (_) {} }
+    else location.assign(url);
+  }
+
+  lightbox.addEventListener('pointerdown', function (event) {
+    if (event.pointerType === 'mouse') return;
+    if (!event.isPrimary) { cancelPhotoLongPress(); return; }
+    const target = event.target.closest ? event.target.closest('.focus-photo') : null;
+    if (!target || target !== activeOverlay || scene.mode !== 'focused') return;
+    photoLongPress = { pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+      startedAt: performance.now(), moved: false };
+  });
+  lightbox.addEventListener('pointermove', function (event) {
+    if (!photoLongPress || event.pointerId !== photoLongPress.pointerId) return;
+    if (Math.abs(event.clientX - photoLongPress.x) > 10 ||
+        Math.abs(event.clientY - photoLongPress.y) > 10) {
+      photoLongPress.moved = true;
+    }
+  });
+  lightbox.addEventListener('pointerup', function (event) {
+    if (!photoLongPress || event.pointerId !== photoLongPress.pointerId) return;
+    const press = photoLongPress;
+    photoLongPress = null;
+    if (press.moved || performance.now() - press.startedAt < 550) return;
+    openPhotoOnlyView();
+  });
+  lightbox.addEventListener('pointercancel', cancelPhotoLongPress);
+  lightbox.addEventListener('lostpointercapture', cancelPhotoLongPress);
+  lightbox.addEventListener('contextmenu', function (event) {
+    if (!photoLongPress || !event.target.closest) return;
+    if (event.target.closest('.focus-photo')) event.preventDefault();
+  });
+
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' && scene.mode !== 'wall') { event.preventDefault(); closePhoto(); return; }
     if (scene.mode !== 'wall') {
